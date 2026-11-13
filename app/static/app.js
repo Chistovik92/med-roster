@@ -90,6 +90,48 @@
 
   // ================= Импорт =================
   var currentSessionId = null;
+  var currentData = null;
+
+  function normName(s) {
+    return (s || "")
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .replace(/\s*\.\s*/g, ".")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function conflictsFor(emp, conflicts) {
+    var key = normName(emp.name);
+    var err = 0, warn = 0;
+    conflicts.forEach(function (c) {
+      if (c.employee && normName(c.employee) === key) {
+        if (c.severity === "error") err++; else warn++;
+      }
+    });
+    return { err: err, warn: warn };
+  }
+
+  function renderTrafficLight(data) {
+    var errs = 0, warns = 0;
+    data.conflicts.forEach(function (c) {
+      if (c.severity === "error") errs++; else warns++;
+    });
+    var bar = document.getElementById("traffic-light");
+    var dot = document.getElementById("tl-dot");
+    var text = document.getElementById("tl-text");
+    bar.classList.remove("green", "yellow", "red");
+    if (errs > 0) {
+      bar.classList.add("red");
+      text.textContent = errs + " ошибок, " + warns + " предупреждений — исправьте ячейки и скачайте формы заново";
+    } else if (warns > 0) {
+      bar.classList.add("yellow");
+      text.textContent = "Ошибок нет, " + warns + " предупреждений — можно выгружать";
+    } else {
+      bar.classList.add("green");
+      text.textContent = "Ошибок нет — график готов к выгрузке";
+    }
+  }
 
   function download(url) {
     var a = document.createElement("a");
@@ -153,9 +195,11 @@
 
   function renderImport(data) {
     document.getElementById("import-results").classList.remove("hidden");
+    currentData = data;
     renderSummary(data);
     renderConflicts(data.conflicts);
     renderEmployees(data);
+    renderTrafficLight(data);
   }
 
   function renderSummary(data) {
@@ -213,8 +257,15 @@
 
     var tbody = el("tbody");
     data.employees.forEach(function (emp) {
+      var cf = conflictsFor(emp, data.conflicts);
       var tr = el("tr");
-      tr.appendChild(el("td", "name", emp.name));
+
+      var nameTd = el("td", "name");
+      var dot = el("span", "dot " + (cf.err > 0 ? "red" : (cf.warn > 0 ? "yellow" : "green")));
+      nameTd.appendChild(dot);
+      nameTd.appendChild(document.createTextNode(emp.name));
+      tr.appendChild(nameTd);
+
       tr.appendChild(el("td", "", emp.position || "—"));
       tr.appendChild(el("td", "num", emp.rate !== 1 ? String(emp.rate) : "1"));
       var normTd = el("td", "");
@@ -229,12 +280,14 @@
 
       for (var d2 = 1; d2 <= data.day_count; d2++) {
         var cell = emp.days[d2];
-        var td = el("td", "");
-        if (!cell) { td.className = "cell-empty"; td.textContent = "·"; }
-        else if (cell.kind === "shift") { td.className = "cell-shift"; td.textContent = cell.raw; }
-        else if (cell.kind === "status") { td.className = "cell-status"; td.textContent = cell.raw; }
-        else if (cell.kind === "invalid") { td.className = "cell-invalid"; td.textContent = "!"; td.title = cell.error || cell.raw; }
-        else { td.className = "cell-empty"; td.textContent = "·"; }
+        var td = el("td", "editable");
+        td.dataset.row = emp.index;
+        td.dataset.day = d2;
+        if (!cell || cell.kind === "empty") { td.className = "editable cell-empty"; td.textContent = "·"; }
+        else if (cell.kind === "shift") { td.className = "editable cell-shift"; td.textContent = cell.raw; }
+        else if (cell.kind === "status") { td.className = "editable cell-status"; td.textContent = cell.raw; }
+        else if (cell.kind === "invalid") { td.className = "editable cell-invalid"; td.textContent = cell.raw || "!"; td.title = cell.error || cell.raw; }
+        else { td.className = "editable cell-empty"; td.textContent = "·"; }
         tr.appendChild(td);
       }
 
@@ -249,6 +302,75 @@
     });
     table.appendChild(tbody);
     wrap.appendChild(table);
+  }
+
+  // ---- редактирование ячейки (делегирование) ----
+  document.getElementById("emp-table-wrap").addEventListener("click", function (ev) {
+    var td = ev.target;
+    while (td && td !== ev.currentTarget && !(td.tagName === "TD" && td.classList.contains("editable"))) {
+      td = td.parentElement;
+    }
+    if (!td || td === ev.currentTarget || td.classList.contains("editing")) return;
+    startEdit(td);
+  });
+
+  function startEdit(td) {
+    var raw = td.textContent;
+    if (raw === "·") raw = "";
+    td.classList.add("editing");
+    td.dataset.prev = td.textContent;
+    td.innerHTML = "";
+    var input = document.createElement("input");
+    input.value = raw;
+    td.appendChild(input);
+    input.focus();
+    input.select();
+
+    var finished = false;
+    function commit() {
+      if (finished) return;
+      finished = true;
+      var val = input.value.trim();
+      var rowIndex = parseInt(td.dataset.row, 10);
+      var day = parseInt(td.dataset.day, 10);
+      saveCell(rowIndex, day, val);
+    }
+    function cancel() {
+      if (finished) return;
+      finished = true;
+      td.classList.remove("editing");
+      td.textContent = td.dataset.prev;
+    }
+    input.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter") { ev.preventDefault(); commit(); }
+      else if (ev.key === "Escape") { ev.preventDefault(); cancel(); }
+    });
+    input.addEventListener("blur", function () {
+      // blur происходит и после commit/cancel; saveCell/render пересоздаст таблицу
+      if (!finished) commit();
+    });
+  }
+
+  function saveCell(rowIndex, day, value) {
+    if (!currentSessionId) return;
+    fetch("/api/session/" + currentSessionId + "/cell", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ row_index: rowIndex, day: day, value: value })
+    })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
+      .then(function (res) {
+        if (!res.ok) {
+          alert("Ошибка сохранения: " + (res.data.error || "неизвестно"));
+          return;
+        }
+        currentData = res.data;
+        renderSummary(res.data);
+        renderConflicts(res.data.conflicts);
+        renderEmployees(res.data);
+        renderTrafficLight(res.data);
+      })
+      .catch(function (e) { alert("Ошибка сети: " + e); });
   }
 
   function fmt(x) { return (Math.round(x * 10) / 10).toFixed(1).replace(".", ","); }

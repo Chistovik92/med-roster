@@ -17,7 +17,7 @@ import tempfile
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, UploadFile, Body
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -25,6 +25,7 @@ from app.core.calendar_rf import get_year_calendar
 from app.core.constants import VALID_WEEK_NORMS
 from app.services.conflict_checker import check_all, Conflict
 from app.services.exporter import export_csv, export_t13_html, export_okud_html, export_signoff_html
+from app.services.time_parser import parse_cell
 from app.services.xls_importer import import_xls, ImportResult, EmployeeRow
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -153,6 +154,47 @@ async def import_file(file: UploadFile = File(...),
             os.unlink(tmp.name)
         except OSError:
             pass
+
+
+@app.post("/api/session/{sid}/cell")
+def edit_cell(sid: str,
+              row_index: int = Body(...),
+              day: int = Body(...),
+              value: str = Body("")) -> JSONResponse:
+    """Изменить одну ячейку графика и пересчитать валидацию.
+
+    ``row_index`` — исходный номер строки сотрудника (поле ``index`` из импорта),
+    ``day`` — день месяца (1-based), ``value`` — новое значение ячейки
+    (интервал времени, код статуса или пустая строка).
+    """
+    session = _sessions.get(sid)
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
+    res: ImportResult = session["result"]
+
+    row = None
+    for r in res.rows:
+        if r.index == row_index:
+            row = r
+            break
+    if row is None:
+        return JSONResponse(status_code=404, content={"error": "сотрудник не найден"})
+    if not (1 <= day <= res.day_count):
+        return JSONResponse(status_code=422, content={"error": "неверный день"})
+
+    value = (value or "").strip()
+    row.raw_cells[day] = value
+    if value == "":
+        row.parsed.pop(day, None)
+    else:
+        row.parsed[day] = parse_cell(value)
+    row.total_hours = sum(p.total_hours for p in row.parsed.values())
+
+    conflicts = check_all(res)
+    session["conflicts"] = conflicts
+    payload = _result_to_dict(res, conflicts)
+    payload["session_id"] = sid
+    return JSONResponse(content=payload)
 
 
 @app.get("/api/export/csv/{sid}")

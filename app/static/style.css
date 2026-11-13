@@ -205,3 +205,46 @@ td.num { font-variant-numeric: tabular-nums; }
   border-top: 1px solid var(--line);
   background: var(--card);
 }
+
+/* ---------- Traffic light (светофор) ---------- */
+.traffic {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+  border-radius: var(--radius);
+  font-weight: 650;
+  font-size: 14px;
+  box-shadow: 0 -2px 8px rgba(16, 24, 40, .08);
+}
+.traffic.green { background: var(--ok-bg); color: var(--ok-ink); }
+.traffic.yellow { background: var(--warn-bg); color: var(--warn-ink); }
+.traffic.red { background: var(--error-bg); color: var(--error-ink); }
+.tl-dot {
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.traffic.green .tl-dot { background: #0e9f6e; }
+.traffic.yellow .tl-dot { background: #e5a50a; }
+.traffic.red .tl-dot { background: #d14343; }
+
+/* ---------- Editable cells & per-row dots ---------- */
+td.editable { cursor: cell; }
+td.editable:hover { outline: 2px solid var(--brand); outline-offset: -2px; }
+td.editing { padding: 0; }
+td.editing input {
+  width: 100%;
+  border: none;
+  padding: 5px 4px;
+  font-size: 13px;
+  text-align: center;
+  background: #fffbe6;
+  outline: 2px solid var(--brand);
+}
+td.name .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; }
+.dot.red { background: #d14343; }
+.dot.yellow { background: #e5a50a; }
+.dot.green { background: #0e9f6e; }
