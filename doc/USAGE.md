@@ -13,7 +13,21 @@ calculate shift schedules and time sheets (OKUD 0504421 / T-13).
 - No database, no Node.js, no Docker — the app is a single FastAPI process with
   a vanilla-JS web page and SQLite-free in-memory sessions.
 
+> **Installers:** to avoid installing Python manually, grab a ready installer from
+> the [GitHub release](https://github.com/Chistovik92/med-roster/releases): `.exe`
+> for Windows, `.deb`/`.rpm` for Linux.
+
 ## 2. Installation
+
+### Option A — ready installer (recommended)
+
+- **Windows:** run `MedGrafik-Setup-<version>.exe` — installs into your user
+  profile; shortcuts appear in the Start menu and on the Desktop.
+- **Debian/Ubuntu:** `sudo dpkg -i med-roster_<version>_amd64.deb` (internet is
+  needed at install time for dependencies).
+- **Fedora/Simply Linux:** `sudo rpm -i med-roster-<version>.x86_64.rpm`.
+
+### Option B — run from source
 
 1. Clone the repository (or copy the project folder).
 2. Install the dependencies:

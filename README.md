@@ -10,6 +10,20 @@ The program imports real schedules from `.xls` files ("SGP №16" format), detec
 errors in them, lets you correct them right in the browser, and exports finished
 official forms.
 
+## Releases / installers
+
+Prebuilt installers are attached to each [GitHub release](https://github.com/Chistovik92/med-roster/releases):
+
+| System | Installer |
+| --- | --- |
+| Windows 7 / 10 / 11 | `MedGrafik-Setup-<ver>.exe` (or portable `.zip`) |
+| Debian / Ubuntu | `med-roster_<ver>_amd64.deb` |
+| Fedora / Simply Linux and others | `med-roster-<ver>.x86_64.rpm` |
+| Any Linux | `med-roster-<ver>.tar.gz` (portable) |
+
+Installers are built automatically by GitHub Actions (see `.github/workflows/release.yml`
+and `packaging/`).
+
 ## Features
 
 - **Russian production calendar** for any year (1990–2050), including holiday
@@ -69,7 +83,9 @@ app/
   services/      # time parser, norms, import, validator, export, scheduler
   static/        # frontend (vanilla JS, no React/Node)
   main.py        # FastAPI application
+run.py           # launcher (server + browser; used by PyInstaller too)
 tests/           # regression tests (run: python tests/test_*.py)
+packaging/       # installers: PyInstaller spec, NSIS, fpm, CI workflow
 doc/
   USAGE.md       # user guide (English)
   USAGE.ru.md    # user guide (Russian)
@@ -77,6 +93,7 @@ doc/
 start.bat        # Windows launcher
 start.sh         # Linux launcher
 requirements.txt
+CHANGELOG.md
 AGENTS.md        # project memory (decisions, formulas, data)
 ```
 

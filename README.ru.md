@@ -10,6 +10,21 @@
 находит в них ошибки, позволяет исправить их прямо в браузере и выгружает
 готовые официальные формы.
 
+## Релизы и установщики
+
+К каждому [релизу на GitHub](https://github.com/Chistovik92/med-roster/releases)
+прикреплены готовые установщики:
+
+| Система | Установщик |
+| --- | --- |
+| Windows 7 / 10 / 11 | `MedGrafik-Setup-<ver>.exe` (или переносимый `.zip`) |
+| Debian / Ubuntu | `med-roster_<ver>_amd64.deb` |
+| Fedora / Simply Linux и др. | `med-roster-<ver>.x86_64.rpm` |
+| Любой Linux | `med-roster-<ver>.tar.gz` (переносимая сборка) |
+
+Установщики собираются автоматически в GitHub Actions (см.
+`.github/workflows/release.yml` и каталог `packaging/`).
+
 ## Возможности
 
 - **Производственный календарь РФ** на любой год (1990…2050), с переносами,
@@ -66,7 +81,9 @@ app/
   services/      # парсер времени, нормы, импорт, валидатор, экспорт, планирование
   static/        # фронтенд (vanilla JS, без React/Node)
   main.py        # FastAPI-приложение
+run.py           # лаунчер (сервер + браузер; используется и в PyInstaller)
 tests/           # регрессионные тесты (запуск: python tests/test_*.py)
+packaging/       # установщики: spec PyInstaller, NSIS, fpm, CI-сборка
 doc/
   USAGE.md       # инструкция пользователя (англ.)
   USAGE.ru.md    # инструкция пользователя (рус.)
@@ -74,6 +91,7 @@ doc/
 start.bat        # запуск на Windows
 start.sh         # запуск на Linux
 requirements.txt
+CHANGELOG.md
 AGENTS.md        # память проекта (решения, формулы, данные)
 ```
 
