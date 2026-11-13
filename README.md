@@ -1,39 +1,44 @@
-# med-roster — «МедГрафик: Поликлиника»
+# med-roster — "MedGraphic: Polyclinic"
 
-Автоматизация расчёта графиков сменности и табелей рабочего времени
-(ОКУД 0504421 / Т-13) для всех категорий персонала детской и взрослой
-поликлиники ГУЗ «СГП № 16».
+> [Русская версия](README.ru.md)
 
-Программа импортирует реальные графики в формате `.xls` (формат «СГП №16»),
-находит в них ошибки, позволяет исправить их прямо в браузере и выгружает
-готовые официальные формы.
+Automation of shift scheduling and time-sheet calculation (OKUD 0504421 / T-13)
+for all staff categories of the children's and adult polyclinic of
+State Healthcare Institution "SGP № 16".
 
-## Возможности
+The program imports real schedules from `.xls` files ("SGP №16" format), detects
+errors in them, lets you correct them right in the browser, and exports finished
+official forms.
 
-- **Производственный календарь РФ** на любой год (1990…2050), с переносами,
-  предпраздничными днями и «рабочими субботами». Точен для 2020–2027.
-- **Расчёт норм** по Приказу № 588н для недельных норм 30/33/36/39/40 часов
-  и долей ставки (1,0 / 0,75 / 0,5 / 0,25), с учётом неявок.
-- **Импорт `.xls`** (xlrd) с автоопределением периода и классификацией должностей.
-- **Валидатор 5 типов ошибок** (на реальных данных):
-  1. неверная норма в колонке «Прим.»;
-  2. накладки времени ставок (основная + 0,5/0,75);
-  3. забытое сокращение предпраздничного дня;
-  4. дублирование строк;
-  5. расхождения сумм часов.
-- **Редактирование графика в браузере**: клик по ячейке, Enter — сохранить,
-  Esc — отмена; автосмены и копирование графика («врач↔медсестра»);
-  нижний «светофор» (зелёный/жёлтый/красный).
-- **Экспорт**: исправленный график (CSV) и печатные формы — Т-13,
-  ОКУД 0504421, график на подпись.
+## Features
 
-## Требования
+- **Russian production calendar** for any year (1990–2050), including holiday
+  transfers, pre-holiday shortened days and "working Saturdays". Exact for
+  2020–2027.
+- **Working-time norm calculation** per Order № 588n for weekly norms of
+  30/33/36/39/40 hours and part-time rates (1.0 / 0.75 / 0.5 / 0.25), with
+  absence deduction.
+- **`.xls` import** (xlrd) with automatic period detection and job-title
+  classification.
+- **Validator for 5 error types** (verified on real data):
+  1. wrong monthly norm in the "Прим." column;
+  2. overlapping shifts for one person (full-time + 0.5/0.75 rate);
+  3. missing pre-holiday day shortening;
+  4. duplicate rows;
+  5. hour-total mismatches.
+- **In-browser editing**: click a cell, Enter to save, Esc to cancel; auto-fill
+  shifts and copy schedules ("doctor ↔ nurse"); bottom "traffic light"
+  (green/yellow/red).
+- **Export**: corrected schedule (CSV) and printable forms — T-13, OKUD 0504421,
+  schedule for approval/signature.
 
-- Python **3.8+** (работает на Windows 7 и Linux Debian 11–13 / Ubuntu).
-- Зависимости из `requirements.txt` (`fastapi`, `uvicorn`, `pydantic`,
+## Requirements
+
+- Python **3.8+** (works on Windows 7 and Linux Debian 11–13 / Ubuntu).
+- Dependencies from `requirements.txt` (`fastapi`, `uvicorn`, `pydantic`,
   `python-multipart`, `xlrd`).
 
-## Запуск
+## Quick start
 
 Windows:
 
@@ -48,32 +53,33 @@ chmod +x start.sh
 ./start.sh
 ```
 
-Откроется браузер на `http://127.0.0.1:8000`.
+A browser opens at `http://127.0.0.1:8000`.
 
-Вручную:
+Manually:
 
 ```
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-## Структура
+## Structure
 
 ```
 app/
-  core/          # календарь РФ, константы
-  services/      # парсер времени, нормы, импорт, валидатор, экспорт, планирование
-  static/        # фронтенд (vanilla JS, без React/Node)
-  main.py        # FastAPI-приложение
-tests/           # регрессионные тесты (запуск: python tests/test_*.py)
-start.bat        # запуск на Windows
-start.sh         # запуск на Linux
+  core/          # Russian production calendar, constants
+  services/      # time parser, norms, import, validator, export, scheduler
+  static/        # frontend (vanilla JS, no React/Node)
+  main.py        # FastAPI application
+tests/           # regression tests (run: python tests/test_*.py)
+start.bat        # Windows launcher
+start.sh         # Linux launcher
 requirements.txt
-AGENTS.md        # память проекта (решения, формулы, данные)
+AGENTS.md        # project memory (decisions, formulas, data)
+ARCHITECTURE.md  # project passport (references, norms, architecture, UX, roadmap)
 ```
 
-## Тесты
+## Tests
 
-Каждый модуль покрыт автономным тестом (без pytest):
+Each module has a standalone test (no pytest needed):
 
 ```
 python tests/test_calendar_rf.py
@@ -85,10 +91,11 @@ python tests/test_exporter.py
 python tests/test_scheduler.py
 ```
 
-> Файлы `.xls` с персональными данными сотрудников в репозиторий **не** входят
-> (см. `.gitignore`) — тесты импорта/валидатора пропускаются при их отсутствии.
+> `.xls` files containing personal data of employees are **not** committed to the
+> repository (see `.gitignore`) — import/validator tests are skipped when they are
+> absent.
 
-## Примечания
+## Notes
 
-- Персональные данные (152-ФЗ) хранятся только локально, в git не коммитятся.
-- Docker опционален (для современного Linux-сервера), обязательным не является.
+- Personal data (152-FZ) stays local only and is never committed to git.
+- Docker is optional (for a modern Linux server), not required.
