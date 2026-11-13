@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>МедГрафик: Поликлиника</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">МГ</span>
+      <div>
+        <h1>МедГрафик: Поликлиника</h1>
+        <p class="sub">Расчёт графиков сменности и табелей · ГУЗ «СГП № 16»</p>
+      </div>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-tab="calendar">Производственный календарь</button>
+      <button class="tab" data-tab="import">Импорт графика (.xls)</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ================= Календарь ================= -->
+    <section id="tab-calendar" class="panel active">
+      <div class="toolbar">
+        <label>Год
+          <input type="number" id="cal-year" value="2026" min="1990" max="2050">
+        </label>
+        <button id="cal-show" class="btn primary">Показать</button>
+        <span id="cal-verify" class="badge hidden">требует сверки</span>
+      </div>
+
+      <div class="card">
+        <h2>Нормы часов по месяцам</h2>
+        <p class="hint">Приказ Минздравсоцразвития от 13.08.2009 № 588н. Норма по расчётному графику пятидневной недели.</p>
+        <div class="table-scroll">
+          <table id="cal-table" class="grid">
+            <thead>
+              <tr>
+                <th>Месяц</th>
+                <th>Раб. дней</th>
+                <th>Сокр. дней</th>
+                <th>30 ч</th>
+                <th>33 ч</th>
+                <th>36 ч</th>
+                <th>39 ч</th>
+                <th>40 ч</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Праздничные и сокращённые дни</h2>
+        <div id="cal-special" class="special"></div>
+      </div>
+    </section>
+
+    <!-- ================= Импорт ================= -->
+    <section id="tab-import" class="panel">
+      <div class="card">
+        <h2>Загрузка графика</h2>
+        <p class="hint">Выберите файл «.xls» (формат «СГП №16»). Период определяется автоматически из шапки; при необходимости укажите год и месяц явно.</p>
+        <div class="toolbar">
+          <input type="file" id="import-file" accept=".xls">
+          <label>Год <input type="number" id="import-year" placeholder="авто"></label>
+          <label>Месяц <input type="number" id="import-month" min="1" max="12" placeholder="авто"></label>
+          <button id="import-run" class="btn primary">Импортировать</button>
+        </div>
+        <div id="import-status" class="status"></div>
+      </div>
+
+      <div id="import-results" class="hidden">
+        <div class="card">
+          <h2>Сводка</h2>
+          <div id="import-summary" class="summary"></div>
+        </div>
+
+        <div class="card">
+          <h2>Ошибки и предупреждения</h2>
+          <ul id="conflict-list" class="conflicts"></ul>
+        </div>
+
+        <div class="card">
+          <h2>Сотрудники</h2>
+          <div class="table-scroll" id="emp-table-wrap"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">med-roster · Python + FastAPI + SQLite · запуск начиная с Windows 7</footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

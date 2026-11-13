@@ -1,0 +1,148 @@
+# -*- coding: utf-8 -*-
+"""
+Веб-интерфейс «МедГрафик: Поликлиника» (FastAPI + vanilla JS).
+
+Эндпоинты:
+  * GET  /                    — одностраничный интерфейс (index.html);
+  * GET  /api/health          — статус;
+  * GET  /api/calendar/{year} — производственный календарь и нормы на год;
+  * POST /api/import          — загрузка .xls → разбор + валидация (5 типов).
+
+Запуск: ``uvicorn app.main:app`` или через start.bat / start.sh.
+"""
+from __future__ import annotations
+
+import os
+import tempfile
+from typing import Any, Dict, List, Optional
+
+from fastapi import FastAPI, File, Form, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+from app.core.calendar_rf import get_year_calendar
+from app.core.constants import VALID_WEEK_NORMS
+from app.services.conflict_checker import check_all, Conflict
+from app.services.xls_importer import import_xls, ImportResult, EmployeeRow
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+app = FastAPI(title="МедГрафик: Поликлиника", version="0.1.0")
+
+
+# --------------------------------------------------------------------------- #
+#  Сериализация в JSON
+# --------------------------------------------------------------------------- #
+def _row_to_dict(row: EmployeeRow, day_count: int) -> Dict[str, Any]:
+    days: Dict[str, Dict[str, Any]] = {}
+    for d in range(1, day_count + 1):
+        raw = row.raw_cells.get(d, "")
+        pc = row.parsed.get(d)
+        if pc is None:
+            days[str(d)] = {"raw": raw, "kind": "empty", "hours": 0.0}
+        elif pc.kind == "status":
+            days[str(d)] = {"raw": raw, "kind": "status", "status": pc.status, "hours": 0.0}
+        elif pc.kind == "shift":
+            days[str(d)] = {"raw": raw, "kind": "shift", "hours": pc.total_hours}
+        else:
+            days[str(d)] = {"raw": raw, "kind": "invalid", "error": pc.error, "hours": 0.0}
+    return {
+        "index": row.index,
+        "name": row.name,
+        "position": row.position,
+        "rate": row.rate,
+        "week_norm": row.week_norm,
+        "norm_rule": row.norm_rule,
+        "days": days,
+        "total_hours": round(row.total_hours, 2),
+        "sum_col": row.sum_col,
+        "norm_col": row.norm_col,
+        "extra_col": row.extra_col,
+    }
+
+
+def _conflict_to_dict(c: Conflict) -> Dict[str, Any]:
+    return {
+        "code": c.code,
+        "severity": c.severity,
+        "message": c.message,
+        "employee": c.employee,
+        "day": c.day,
+        "details": c.details,
+    }
+
+
+def _result_to_dict(res: ImportResult, conflicts: List[Conflict]) -> Dict[str, Any]:
+    return {
+        "source": os.path.basename(res.source),
+        "year": res.year,
+        "month": res.month,
+        "day_count": res.day_count,
+        "employees": [_row_to_dict(r, res.day_count) for r in res.rows],
+        "conflicts": [_conflict_to_dict(c) for c in conflicts],
+        "warnings": res.warnings,
+    }
+
+
+# --------------------------------------------------------------------------- #
+#  Роуты
+# --------------------------------------------------------------------------- #
+@app.get("/")
+def index() -> FileResponse:
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+
+
+@app.get("/api/health")
+def health() -> Dict[str, Any]:
+    return {"status": "ok", "app": "med-roster", "version": "0.1.0"}
+
+
+@app.get("/api/calendar/{year}")
+def calendar(year: int) -> Dict[str, Any]:
+    cal = get_year_calendar(year)
+    months = []
+    for m in range(1, 13):
+        work, short = cal.month_stats(m)
+        norms = {str(w): cal.norm_hours(w, month=m) for w in VALID_WEEK_NORMS}
+        months.append({"month": m, "work": work, "short": short, "norm": norms})
+    short_days = [{"month": d.date.month, "day": d.date.day}
+                  for d in cal.days if d.is_shortened]
+    holidays = [{"month": d.date.month, "day": d.date.day}
+                for d in cal.days if d.is_holiday]
+    return {
+        "year": year,
+        "need_verify": cal.need_verify,
+        "months": months,
+        "year_norm": {str(w): cal.norm_hours(w) for w in VALID_WEEK_NORMS},
+        "short_days": short_days,
+        "holidays": holidays,
+    }
+
+
+@app.post("/api/import")
+async def import_file(file: UploadFile = File(...),
+                      year: Optional[int] = Form(None),
+                      month: Optional[int] = Form(None)) -> JSONResponse:
+    """Загрузить .xls, разобрать и провалидировать."""
+    data = await file.read()
+    if not data:
+        return JSONResponse(status_code=400, content={"error": "пустой файл"})
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xls")
+    try:
+        tmp.write(data)
+        tmp.close()
+        res = import_xls(tmp.name, year=year, month=month)
+        conflicts = check_all(res)
+        return JSONResponse(content=_result_to_dict(res, conflicts))
+    except Exception as exc:  # noqa: BLE001 — отдаём понятную ошибку клиенту
+        return JSONResponse(status_code=422, content={"error": str(exc)})
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+
+
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
