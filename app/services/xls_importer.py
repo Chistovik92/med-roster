@@ -89,19 +89,35 @@ def _to_float(value) -> Optional[float]:
 def _to_str(value) -> str:
     if value is None:
         return ""
-    if isinstance(value, float) and value == int(value) and value != value:
+    if isinstance(value, float) and value != value:  # NaN
+        return ""
+    # Число 0,0 в ячейке расписания — эквивалент пустой ячейки (xlrd отдаёт
+    # пустые текстовые ячейки как ''; но числовые пустые — как 0.0).
+    if isinstance(value, float) and value == 0.0:
         return ""
     return str(value).strip()
 
 
-def detect_period(path: str) -> Tuple[Optional[int], Optional[int]]:
-    """Автоопределить (год, месяц) из «шапки» файла.
+def _open_workbook(source):
+    """Открыть книгу из пути к файлу или из байтов (``bytes``/``bytearray``).
 
-    Ищет в первых строках шаблон вида «ноябрь 2026 года». Возвращает
-    ``(year, month)`` или ``(None, None)``, если не найдено.
+    Поддержка байтов позволяет импортировать загруженный файл без записи во
+    временный файл (на Windows это убирает проблемы с блокировкой файла).
     """
     import xlrd
-    wb = xlrd.open_workbook(path)
+    if isinstance(source, (bytes, bytearray)):
+        return xlrd.open_workbook(file_contents=bytes(source))
+    return xlrd.open_workbook(source)
+
+
+def detect_period(source) -> Tuple[Optional[int], Optional[int]]:
+    """Автоопределить (год, месяц) из «шапки» файла.
+
+    ``source`` — путь к файлу или байты (``bytes``). Ищет в первых строках
+    шаблон вида «ноябрь 2026 года». Возвращает ``(year, month)`` или
+    ``(None, None)``, если не найдено.
+    """
+    wb = _open_workbook(source)
     sh = wb.sheet_by_index(0)
     for r in range(0, min(sh.nrows, FIRST_DATA_ROW)):
         for c in range(0, sh.ncols):
@@ -120,17 +136,17 @@ def detect_period(path: str) -> Tuple[Optional[int], Optional[int]]:
     return None, None
 
 
-def import_xls(path: str, year: Optional[int] = None,
-               month: Optional[int] = None) -> ImportResult:
+def import_xls(source, year: Optional[int] = None,
+               month: Optional[int] = None,
+               filename: Optional[str] = None) -> ImportResult:
     """Импортировать график из ``.xls``.
 
-    Если ``year``/``month`` не заданы, период определяется из «шапки» файла.
-    Возвращает :class:`ImportResult` со списком строк сотрудников.
+    ``source`` — путь к файлу или байты (``bytes``); ``filename`` — имя файла
+    для отображения (когда передаются байты). Если ``year``/``month`` не заданы,
+    период определяется из «шапки» файла. Возвращает :class:`ImportResult`.
     """
-    import xlrd
-
     if year is None or month is None:
-        d_year, d_month = detect_period(path)
+        d_year, d_month = detect_period(source)
         year = year if year is not None else d_year
         month = month if month is not None else d_month
     if year is None or month is None:
@@ -138,9 +154,11 @@ def import_xls(path: str, year: Optional[int] = None,
 
     day_count = calendar.monthrange(year, month)[1]
 
-    wb = xlrd.open_workbook(path)
+    wb = _open_workbook(source)
     sh = wb.sheet_by_index(0)
-    result = ImportResult(source=path, year=year, month=month, day_count=day_count)
+    src_name = filename or (source if isinstance(source, str) else "upload.xls")
+    result = ImportResult(source=src_name, year=year, month=month,
+                          day_count=day_count)
 
     for r in range(FIRST_DATA_ROW, sh.nrows):
         name = _to_str(sh.cell_value(r, COL_NAME))

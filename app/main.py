@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import os
-import tempfile
+import time
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -21,6 +21,7 @@ from fastapi import FastAPI, File, Form, UploadFile, Body
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from app import __version__
 from app.core.calendar_rf import get_year_calendar
 from app.core.constants import VALID_WEEK_NORMS
 from app.services.conflict_checker import check_all, Conflict
@@ -32,11 +33,39 @@ from app.services.xls_importer import import_xls, ImportResult, EmployeeRow
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
-app = FastAPI(title="МедГрафик: Поликлиника", version="0.1.0")
+app = FastAPI(title="МедГрафик: Поликлиника", version=__version__)
 
-# In-memory хранилище сессий импорта: session_id -> (ImportResult, conflicts).
+# In-memory хранилище сессий импорта: session_id -> dict(result, conflicts, at).
 # Хранит только разобранные данные в памяти процесса (не персональные файлы).
 _sessions: Dict[str, Dict[str, Any]] = {}
+
+# Ограничение на число одновременно хранимых сессий (защита от роста памяти).
+# Для локального одно-пользовательского приложения достаточно 8; при превышении
+# самая старая сессия вытесняется (порядок вставки в dict сохраняется, Py 3.7+).
+_MAX_SESSIONS = 8
+# Время жизни сессии без обращений, секунды (30 минут).
+_SESSION_TTL = 30 * 60
+
+
+def _gc_sessions() -> None:
+    """Вытеснить просроченные и лишние сессии (защита от роста памяти)."""
+    now = time.time()
+    # удаляем сессии с истёкшим TTL
+    for sid in [s for s, v in _sessions.items() if now - v.get("at", now) > _SESSION_TTL]:
+        _sessions.pop(sid, None)
+    # вытесняем самые старые при превышении лимита
+    while len(_sessions) > _MAX_SESSIONS:
+        oldest = next(iter(_sessions))
+        _sessions.pop(oldest, None)
+
+
+def _get_session(sid: str) -> Optional[Dict[str, Any]]:
+    """Достать сессию и обновить время последнего обращения."""
+    _gc_sessions()
+    session = _sessions.get(sid)
+    if session is not None:
+        session["at"] = time.time()
+    return session
 
 
 # --------------------------------------------------------------------------- #
@@ -103,7 +132,7 @@ def index() -> FileResponse:
 
 @app.get("/api/health")
 def health() -> Dict[str, Any]:
-    return {"status": "ok", "app": "med-roster", "version": "0.1.0"}
+    return {"status": "ok", "app": "med-roster", "version": __version__}
 
 
 @app.get("/api/calendar/{year}")
@@ -137,24 +166,17 @@ async def import_file(file: UploadFile = File(...),
     if not data:
         return JSONResponse(status_code=400, content={"error": "пустой файл"})
 
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xls")
     try:
-        tmp.write(data)
-        tmp.close()
-        res = import_xls(tmp.name, year=year, month=month)
+        res = import_xls(data, year=year, month=month, filename=file.filename)
         conflicts = check_all(res)
         sid = uuid.uuid4().hex
-        _sessions[sid] = {"result": res, "conflicts": conflicts}
+        _sessions[sid] = {"result": res, "conflicts": conflicts, "at": time.time()}
+        _gc_sessions()
         payload = _result_to_dict(res, conflicts)
         payload["session_id"] = sid
         return JSONResponse(content=payload)
     except Exception as exc:  # noqa: BLE001 — отдаём понятную ошибку клиенту
         return JSONResponse(status_code=422, content={"error": str(exc)})
-    finally:
-        try:
-            os.unlink(tmp.name)
-        except OSError:
-            pass
 
 
 @app.post("/api/session/{sid}/cell")
@@ -168,7 +190,7 @@ def edit_cell(sid: str,
     ``day`` — день месяца (1-based), ``value`` — новое значение ячейки
     (интервал времени, код статуса или пустая строка).
     """
-    session = _sessions.get(sid)
+    session = _get_session(sid)
     if session is None:
         return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
     res: ImportResult = session["result"]
@@ -207,7 +229,7 @@ def autofill_route(sid: str,
 
     ``mode`` — ``"workdays"`` (только рабочие дни) или ``"empty"`` (все пустые).
     """
-    session = _sessions.get(sid)
+    session = _get_session(sid)
     if session is None:
         return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
     res: ImportResult = session["result"]
@@ -228,7 +250,7 @@ def copy_route(sid: str,
                from_index: int = Body(...),
                to_index: int = Body(...)) -> JSONResponse:
     """Скопировать график одного сотрудника другому (синхронизация врач↔медсестра)."""
-    session = _sessions.get(sid)
+    session = _get_session(sid)
     if session is None:
         return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
     res: ImportResult = session["result"]
@@ -246,7 +268,7 @@ def copy_route(sid: str,
 @app.get("/api/export/csv/{sid}")
 def export_csv_route(sid: str) -> Response:
     """Выгрузить исправленный график в CSV."""
-    session = _sessions.get(sid)
+    session = _get_session(sid)
     if session is None:
         return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
     res: ImportResult = session["result"]
@@ -264,7 +286,7 @@ def export_csv_route(sid: str) -> Response:
 def export_t13_route(sid: str, org: Optional[str] = None,
                      dept: Optional[str] = None) -> Response:
     """Сформировать табель Т-13 (печатный HTML)."""
-    session = _sessions.get(sid)
+    session = _get_session(sid)
     if session is None:
         return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
     res: ImportResult = session["result"]
@@ -283,7 +305,7 @@ def export_t13_route(sid: str, org: Optional[str] = None,
 def export_okud_route(sid: str, org: Optional[str] = None,
                       dept: Optional[str] = None) -> Response:
     """Сформировать табель ОКУД 0504421 (печатный HTML)."""
-    session = _sessions.get(sid)
+    session = _get_session(sid)
     if session is None:
         return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
     res: ImportResult = session["result"]
@@ -302,7 +324,7 @@ def export_okud_route(sid: str, org: Optional[str] = None,
 def export_signoff_route(sid: str, org: Optional[str] = None,
                          dept: Optional[str] = None) -> Response:
     """Сформировать график на подпись (печатный HTML)."""
-    session = _sessions.get(sid)
+    session = _get_session(sid)
     if session is None:
         return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
     res: ImportResult = session["result"]

@@ -1,4 +1,10 @@
-/* МедГрафик: Поликлиника — фронтенд (vanilla JS). */
+/* МедГрафик: Поликлиника — фронтенд (vanilla JS, без React/Node).
+ *
+ * Оптимизация под слабое железо (2009+): после первого импорта таблица
+ * сотрудников не пересоздаётся целиком, а обновляется инкрементально —
+ * перерисовываются только изменённые строки, а у остальных обновляется лишь
+ * цветовая метка (dot). Это убирает «подвисание» при правке каждой ячейки.
+ */
 (function () {
   "use strict";
 
@@ -24,6 +30,12 @@
     if (cls) e.className = cls;
     if (text !== undefined) e.textContent = text;
     return e;
+  }
+
+  function fmt(x) { return (Math.round(x * 10) / 10).toFixed(1).replace(".", ","); }
+  function fmtSigned(x) {
+    var v = Math.round(x * 10) / 10;
+    return (v > 0 ? "+" : "") + v.toFixed(1).replace(".", ",");
   }
 
   // ================= Календарь =================
@@ -91,6 +103,7 @@
   // ================= Импорт =================
   var currentSessionId = null;
   var currentData = null;
+  var empTbody = null;   // ссылка на tbody таблицы сотрудников (для инкремента)
 
   function normName(s) {
     return (s || "")
@@ -194,24 +207,30 @@
   });
 
   function renderImport(data) {
+    empTbody = null;   // новый импорт → полная перестройка таблицы
     document.getElementById("import-results").classList.remove("hidden");
     applyServerResult(data);
   }
 
-  function applyServerResult(data) {
+  function applyServerResult(data, changedIndices) {
     currentData = data;
     renderSummary(data);
     renderConflicts(data.conflicts);
-    renderEmployees(data);
     renderTrafficLight(data);
-    populateEmpSelects(data);
+    if (!empTbody) {
+      // первый (или повторный) импорт — строим всё с нуля
+      populateEmpSelects(data);
+      renderEmployees(data);
+    } else {
+      // инкрементальное обновление изменённых строк
+      updateEmployees(data, changedIndices || []);
+    }
   }
 
   function populateEmpSelects(data) {
     var ids = ["tool-emp", "tool-from", "tool-to"];
     ids.forEach(function (id) {
       var sel = document.getElementById(id);
-      var prev = sel.value;
       sel.innerHTML = "";
       data.employees.forEach(function (emp) {
         var opt = document.createElement("option");
@@ -219,7 +238,6 @@
         opt.textContent = emp.name + (emp.position ? " — " + emp.position : "");
         sel.appendChild(opt);
       });
-      if (prev && sel.querySelector('option[value="' + prev + '"]')) sel.value = prev;
     });
   }
 
@@ -258,6 +276,56 @@
     });
   }
 
+  function buildEmployeeRow(emp, cf, dayCount) {
+    var tr = el("tr");
+    tr.dataset.index = emp.index;
+
+    var nameTd = el("td", "name");
+    var dot = el("span", "dot " + (cf.err > 0 ? "red" : (cf.warn > 0 ? "yellow" : "green")));
+    nameTd.appendChild(dot);
+    nameTd.appendChild(document.createTextNode(emp.name));
+    tr.appendChild(nameTd);
+
+    tr.appendChild(el("td", "", emp.position || "—"));
+    tr.appendChild(el("td", "num", emp.rate !== 1 ? String(emp.rate) : "1"));
+    var normTd = el("td", "");
+    if (emp.week_norm) {
+      var tag = el("span", "weeknorm-tag", emp.week_norm + " ч");
+      tag.title = NORM_LABELS[emp.week_norm] || "";
+      normTd.appendChild(tag);
+    } else {
+      normTd.textContent = "?";
+    }
+    tr.appendChild(normTd);
+
+    for (var d2 = 1; d2 <= dayCount; d2++) {
+      var cell = emp.days[d2];
+      var td = el("td", "editable");
+      td.dataset.row = emp.index;
+      td.dataset.day = d2;
+      if (!cell || cell.kind === "empty") { td.className = "editable cell-empty"; td.textContent = "·"; }
+      else if (cell.kind === "shift") { td.className = "editable cell-shift"; td.textContent = cell.raw; }
+      else if (cell.kind === "status") { td.className = "editable cell-status"; td.textContent = cell.raw; }
+      else if (cell.kind === "invalid") { td.className = "editable cell-invalid"; td.textContent = cell.raw || "!"; td.title = cell.error || cell.raw; }
+      else { td.className = "editable cell-empty"; td.textContent = "·"; }
+      tr.appendChild(td);
+    }
+
+    tr.appendChild(el("td", "num", fmt(emp.total_hours)));
+    tr.appendChild(el("td", "num", emp.sum_col != null ? fmt(emp.sum_col) : ""));
+    tr.appendChild(el("td", "num", emp.norm_col != null ? fmt(emp.norm_col) : ""));
+    var dev = emp.norm_col != null ? (emp.total_hours - emp.norm_col) : null;
+    var devTd = el("td", "num", dev != null ? fmtSigned(dev) : "");
+    if (dev != null) devTd.style.color = Math.abs(dev) > 0.5 ? "#d14343" : "#0e7a52";
+    tr.appendChild(devTd);
+    return tr;
+  }
+
+  function updateRowDot(tr, cf) {
+    var dot = tr.querySelector(".dot");
+    if (dot) dot.className = "dot " + (cf.err > 0 ? "red" : (cf.warn > 0 ? "yellow" : "green"));
+  }
+
   function renderEmployees(data) {
     var wrap = document.getElementById("emp-table-wrap");
     wrap.innerHTML = "";
@@ -279,50 +347,47 @@
     var tbody = el("tbody");
     data.employees.forEach(function (emp) {
       var cf = conflictsFor(emp, data.conflicts);
-      var tr = el("tr");
-
-      var nameTd = el("td", "name");
-      var dot = el("span", "dot " + (cf.err > 0 ? "red" : (cf.warn > 0 ? "yellow" : "green")));
-      nameTd.appendChild(dot);
-      nameTd.appendChild(document.createTextNode(emp.name));
-      tr.appendChild(nameTd);
-
-      tr.appendChild(el("td", "", emp.position || "—"));
-      tr.appendChild(el("td", "num", emp.rate !== 1 ? String(emp.rate) : "1"));
-      var normTd = el("td", "");
-      if (emp.week_norm) {
-        var tag = el("span", "weeknorm-tag", emp.week_norm + " ч");
-        tag.title = NORM_LABELS[emp.week_norm] || "";
-        normTd.appendChild(tag);
-      } else {
-        normTd.textContent = "?";
-      }
-      tr.appendChild(normTd);
-
-      for (var d2 = 1; d2 <= data.day_count; d2++) {
-        var cell = emp.days[d2];
-        var td = el("td", "editable");
-        td.dataset.row = emp.index;
-        td.dataset.day = d2;
-        if (!cell || cell.kind === "empty") { td.className = "editable cell-empty"; td.textContent = "·"; }
-        else if (cell.kind === "shift") { td.className = "editable cell-shift"; td.textContent = cell.raw; }
-        else if (cell.kind === "status") { td.className = "editable cell-status"; td.textContent = cell.raw; }
-        else if (cell.kind === "invalid") { td.className = "editable cell-invalid"; td.textContent = cell.raw || "!"; td.title = cell.error || cell.raw; }
-        else { td.className = "editable cell-empty"; td.textContent = "·"; }
-        tr.appendChild(td);
-      }
-
-      tr.appendChild(el("td", "num", fmt(emp.total_hours)));
-      tr.appendChild(el("td", "num", emp.sum_col != null ? fmt(emp.sum_col) : ""));
-      tr.appendChild(el("td", "num", emp.norm_col != null ? fmt(emp.norm_col) : ""));
-      var dev = emp.norm_col != null ? (emp.total_hours - emp.norm_col) : null;
-      var devTd = el("td", "num", dev != null ? fmtSigned(dev) : "");
-      if (dev != null) devTd.style.color = Math.abs(dev) > 0.5 ? "#d14343" : "#0e7a52";
-      tr.appendChild(devTd);
-      tbody.appendChild(tr);
+      tbody.appendChild(buildEmployeeRow(emp, cf, data.day_count));
     });
     table.appendChild(tbody);
     wrap.appendChild(table);
+    empTbody = tbody;
+  }
+
+  function updateEmployees(data, changedIndices) {
+    var tbody = empTbody;
+    if (!tbody) { renderEmployees(data); return; }
+
+    var changed = {};
+    changedIndices.forEach(function (i) { changed[i] = true; });
+
+    var map = {};
+    for (var k = 0; k < tbody.rows.length; k++) {
+      map[tbody.rows[k].getAttribute("data-index")] = tbody.rows[k];
+    }
+
+    var present = {};
+    data.employees.forEach(function (emp) {
+      present[emp.index] = true;
+      var cf = conflictsFor(emp, data.conflicts);
+      var tr = map[emp.index];
+      if (!tr || changed[emp.index]) {
+        var fresh = buildEmployeeRow(emp, cf, data.day_count);
+        if (tr) tbody.replaceChild(fresh, tr);
+        else tbody.appendChild(fresh);
+      } else {
+        // строка не менялась — обновляем только цветовую метку (конфликты глобальны)
+        updateRowDot(tr, cf);
+      }
+    });
+
+    // удаляем строки, которых больше нет (при правке не бывает, но безопасно)
+    Object.keys(map).forEach(function (idx) {
+      if (!present[idx]) {
+        var tr = map[idx];
+        if (tr && tr.parentNode) tr.parentNode.removeChild(tr);
+      }
+    });
   }
 
   // ---- редактирование ячейки (делегирование) ----
@@ -385,13 +450,13 @@
           alert("Ошибка сохранения: " + (res.data.error || "неизвестно"));
           return;
         }
-        applyServerResult(res.data);
+        applyServerResult(res.data, [rowIndex]);
       })
       .catch(function (e) { alert("Ошибка сети: " + e); });
   }
 
   // ---- инструменты: автозаполнение и копирование ----
-  function postTool(url, body) {
+  function postTool(url, body, changedIndices) {
     if (!currentSessionId) return;
     return fetch("/api/session/" + currentSessionId + url, {
       method: "POST",
@@ -401,7 +466,7 @@
       .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
       .then(function (res) {
         if (!res.ok) { alert("Ошибка: " + (res.data.error || "неизвестно")); return; }
-        applyServerResult(res.data);
+        applyServerResult(res.data, changedIndices || []);
       })
       .catch(function (e) { alert("Ошибка сети: " + e); });
   }
@@ -412,7 +477,7 @@
     var workdays = document.getElementById("tool-workdays").checked;
     if (!rowIndex) { alert("Выберите сотрудника"); return; }
     if (!shift) { alert("Введите смену (например, 8-15,48)"); return; }
-    postTool("/autofill", { row_index: rowIndex, shift: shift, mode: workdays ? "workdays" : "empty" });
+    postTool("/autofill", { row_index: rowIndex, shift: shift, mode: workdays ? "workdays" : "empty" }, [rowIndex]);
   });
 
   document.getElementById("tool-copy").addEventListener("click", function () {
@@ -420,14 +485,8 @@
     var toIndex = parseInt(document.getElementById("tool-to").value, 10);
     if (!fromIndex || !toIndex) { alert("Выберите обоих сотрудников"); return; }
     if (fromIndex === toIndex) { alert("Выберите разных сотрудников"); return; }
-    postTool("/copy", { from_index: fromIndex, to_index: toIndex });
+    postTool("/copy", { from_index: fromIndex, to_index: toIndex }, [toIndex]);
   });
-
-  function fmt(x) { return (Math.round(x * 10) / 10).toFixed(1).replace(".", ","); }
-  function fmtSigned(x) {
-    var v = Math.round(x * 10) / 10;
-    return (v > 0 ? "+" : "") + v.toFixed(1).replace(".", ",");
-  }
 
   // ---- старт ----
   loadCalendar(parseInt(document.getElementById("cal-year").value, 10) || 2026);
