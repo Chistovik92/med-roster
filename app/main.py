@@ -14,21 +14,27 @@ from __future__ import annotations
 
 import os
 import tempfile
+import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, File, Form, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.core.calendar_rf import get_year_calendar
 from app.core.constants import VALID_WEEK_NORMS
 from app.services.conflict_checker import check_all, Conflict
+from app.services.exporter import export_csv, export_t13_html
 from app.services.xls_importer import import_xls, ImportResult, EmployeeRow
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
 app = FastAPI(title="МедГрафик: Поликлиника", version="0.1.0")
+
+# In-memory хранилище сессий импорта: session_id -> (ImportResult, conflicts).
+# Хранит только разобранные данные в памяти процесса (не персональные файлы).
+_sessions: Dict[str, Dict[str, Any]] = {}
 
 
 # --------------------------------------------------------------------------- #
@@ -135,7 +141,11 @@ async def import_file(file: UploadFile = File(...),
         tmp.close()
         res = import_xls(tmp.name, year=year, month=month)
         conflicts = check_all(res)
-        return JSONResponse(content=_result_to_dict(res, conflicts))
+        sid = uuid.uuid4().hex
+        _sessions[sid] = {"result": res, "conflicts": conflicts}
+        payload = _result_to_dict(res, conflicts)
+        payload["session_id"] = sid
+        return JSONResponse(content=payload)
     except Exception as exc:  # noqa: BLE001 — отдаём понятную ошибку клиенту
         return JSONResponse(status_code=422, content={"error": str(exc)})
     finally:
@@ -143,6 +153,42 @@ async def import_file(file: UploadFile = File(...),
             os.unlink(tmp.name)
         except OSError:
             pass
+
+
+@app.get("/api/export/csv/{sid}")
+def export_csv_route(sid: str) -> Response:
+    """Выгрузить исправленный график в CSV."""
+    session = _sessions.get(sid)
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
+    res: ImportResult = session["result"]
+    csv_text = export_csv(res)
+    filename = "graph_%d-%02d.csv" % (res.year, res.month)
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition":
+                 'attachment; filename="%s"' % filename},
+    )
+
+
+@app.get("/api/export/t13/{sid}")
+def export_t13_route(sid: str, org: Optional[str] = None,
+                     dept: Optional[str] = None) -> Response:
+    """Сформировать табель Т-13 (печатный HTML)."""
+    session = _sessions.get(sid)
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
+    res: ImportResult = session["result"]
+    html_text = export_t13_html(res, org=org or "ГУЗ «СГП № 16»",
+                                dept=dept or "")
+    filename = "tabel_T13_%d-%02d.html" % (res.year, res.month)
+    return Response(
+        content=html_text,
+        media_type="text/html; charset=utf-8",
+        headers={"Content-Disposition":
+                 'attachment; filename="%s"' % filename},
+    )
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

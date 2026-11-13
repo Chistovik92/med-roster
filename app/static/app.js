@@ -89,6 +89,24 @@
   });
 
   // ================= Импорт =================
+  var currentSessionId = null;
+
+  function download(url) {
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  document.getElementById("export-csv").addEventListener("click", function () {
+    if (currentSessionId) download("/api/export/csv/" + currentSessionId);
+  });
+  document.getElementById("export-t13").addEventListener("click", function () {
+    if (currentSessionId) download("/api/export/t13/" + currentSessionId);
+  });
+
   document.getElementById("import-run").addEventListener("click", function () {
     var fileInput = document.getElementById("import-file");
     var status = document.getElementById("import-status");
@@ -118,6 +136,7 @@
         status.textContent = "Готово: " + res.data.source + " — " +
           res.data.employees.length + " сотрудников";
         status.className = "status ok";
+        currentSessionId = res.data.session_id;
         renderImport(res.data);
       })
       .catch(function (e) {
