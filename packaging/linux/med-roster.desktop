@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=МедГрафик: Поликлиника
+Name[ru]=МедГрафик: Поликлиника
+GenericName=Графики сменности и табели
+Comment=Расчёт графиков сменности и табелей рабочего времени
+Exec=/usr/bin/med-roster
+Icon=med-roster
+Terminal=false
+Categories=Office;Utility;
+Keywords=график;табель;поликлиника;расписание;schedule;

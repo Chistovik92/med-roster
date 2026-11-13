@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Лаунчер «МедГрафик: Поликлиника» для установленного Linux-пакета.
+# Устанавливается в /usr/bin/med-roster; приложение лежит в /opt/med-roster.
+set -e
+
+APP_DIR="/opt/med-roster"
+cd "$APP_DIR"
+
+# 1) venv, созданный при установке (postinst), — предпочтительный вариант
+if [ -x "$APP_DIR/venv/bin/python3" ]; then
+    exec "$APP_DIR/venv/bin/python3" run.py
+fi
+
+# 2) системный python3 (если зависимости уже стоят глобально)
+exec python3 run.py

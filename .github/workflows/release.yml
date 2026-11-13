@@ -1,0 +1,96 @@
+name: release
+
+# Сборка установщиков и публикация релиза при пуше тега вида v*.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Windows installer (7/10/11)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Python 3.8 — последняя версия, поддерживающая Windows 7.
+          python-version: "3.8"
+          architecture: "x64"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller==6.11.1
+
+      - name: Build app with PyInstaller
+        run: python -m PyInstaller --noconfirm --clean packaging/medgrafik.spec
+
+      - name: Install NSIS
+        run: choco install nsis --no-progress -y
+
+      - name: Get version
+        id: ver
+        shell: bash
+        run: |
+          echo "version=$(python packaging/get_version.py)" >> "$GITHUB_OUTPUT"
+
+      - name: Build NSIS installer
+        working-directory: packaging
+        run: makensis /DVERSION=${{ steps.ver.outputs.version }} installer_windows.nsi
+
+      - name: Package portable zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist\MedGrafik\* -DestinationPath "MedGrafik-portable-${{ steps.ver.outputs.version }}-win64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: |
+            packaging/MedGrafik-Setup-*.exe
+            MedGrafik-portable-*.zip
+
+  linux:
+    name: Linux packages (deb/rpm/tar.gz)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install fpm and rpm
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ruby ruby-dev rubygems build-essential rpm python3 python3-venv python3-pip
+          sudo gem install fpm --no-document
+
+      - name: Build packages
+        run: bash packaging/build_linux.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: packaging/output/*
+
+  release:
+    name: Publish GitHub release
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: find artifacts -type f -print
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/windows-installer/*.exe
+            artifacts/windows-installer/*.zip
+            artifacts/linux-packages/*

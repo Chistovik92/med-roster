@@ -31,3 +31,10 @@ exports/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Сборка (PyInstaller / NSIS / fpm)
+build/
+dist/
+packaging/output/
+packaging/MedGrafik-Setup-*.exe
+*.zip
