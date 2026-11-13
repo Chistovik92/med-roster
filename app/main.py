@@ -24,7 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from app.core.calendar_rf import get_year_calendar
 from app.core.constants import VALID_WEEK_NORMS
 from app.services.conflict_checker import check_all, Conflict
-from app.services.exporter import export_csv, export_t13_html
+from app.services.exporter import export_csv, export_t13_html, export_okud_html, export_signoff_html
 from app.services.xls_importer import import_xls, ImportResult, EmployeeRow
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -183,6 +183,44 @@ def export_t13_route(sid: str, org: Optional[str] = None,
     html_text = export_t13_html(res, org=org or "ГУЗ «СГП № 16»",
                                 dept=dept or "")
     filename = "tabel_T13_%d-%02d.html" % (res.year, res.month)
+    return Response(
+        content=html_text,
+        media_type="text/html; charset=utf-8",
+        headers={"Content-Disposition":
+                 'attachment; filename="%s"' % filename},
+    )
+
+
+@app.get("/api/export/okud/{sid}")
+def export_okud_route(sid: str, org: Optional[str] = None,
+                      dept: Optional[str] = None) -> Response:
+    """Сформировать табель ОКУД 0504421 (печатный HTML)."""
+    session = _sessions.get(sid)
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
+    res: ImportResult = session["result"]
+    html_text = export_okud_html(res, org=org or "ГУЗ «СГП № 16»",
+                                 dept=dept or "")
+    filename = "tabel_OKUD0504421_%d-%02d.html" % (res.year, res.month)
+    return Response(
+        content=html_text,
+        media_type="text/html; charset=utf-8",
+        headers={"Content-Disposition":
+                 'attachment; filename="%s"' % filename},
+    )
+
+
+@app.get("/api/export/signoff/{sid}")
+def export_signoff_route(sid: str, org: Optional[str] = None,
+                         dept: Optional[str] = None) -> Response:
+    """Сформировать график на подпись (печатный HTML)."""
+    session = _sessions.get(sid)
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
+    res: ImportResult = session["result"]
+    html_text = export_signoff_html(res, org=org or "ГУЗ «СГП № 16»",
+                                    dept=dept or "")
+    filename = "graph_podpis_%d-%02d.html" % (res.year, res.month)
     return Response(
         content=html_text,
         media_type="text/html; charset=utf-8",

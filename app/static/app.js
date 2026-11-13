@@ -106,6 +106,12 @@
   document.getElementById("export-t13").addEventListener("click", function () {
     if (currentSessionId) download("/api/export/t13/" + currentSessionId);
   });
+  document.getElementById("export-okud").addEventListener("click", function () {
+    if (currentSessionId) download("/api/export/okud/" + currentSessionId);
+  });
+  document.getElementById("export-signoff").addEventListener("click", function () {
+    if (currentSessionId) download("/api/export/signoff/" + currentSessionId);
+  });
 
   document.getElementById("import-run").addEventListener("click", function () {
     var fileInput = document.getElementById("import-file");

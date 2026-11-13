@@ -5,7 +5,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.services.xls_importer import ImportResult, EmployeeRow
 from app.services.time_parser import parse_cell
-from app.services.exporter import export_csv, export_t13_html, tabel_code_for
+from app.services.exporter import (
+    export_csv, export_t13_html, export_okud_html, export_signoff_html,
+    tabel_code_for,
+)
 
 fails = 0
 def check(name, actual, expected):
@@ -65,6 +68,22 @@ check("T13: месяц", "ноября" in html, True)
 check("T13: имя", "Иванов И.И." in html, True)
 check("T13: код явки", "Я" in html, True)
 check("T13: часов 15,6", "15,6" in html, True)
+
+# --- export_okud_html (ОКУД 0504421) --------------------------------------- #
+okud = export_okud_html(res)
+check("ОКУД: код формы", "0504421" in okud, True)
+check("ОКУД: месяц", "ноября" in okud, True)
+check("ОКУД: имя", "Иванов И.И." in okud, True)
+check("ОКУД: код явки", "Я" in okud, True)
+check("ОКУД: есть колонка дней", "Отработано" in okud, True)
+
+# --- export_signoff_html (график на подпись) -------------------------------- #
+sign = export_signoff_html(res)
+check("подпись: УТВЕРЖДАЮ", "УТВЕРЖДАЮ" in sign, True)
+check("подпись: СОГЛАСОВАНО", "СОГЛАСОВАНО" in sign, True)
+check("подпись: ГРАФИК РАБОТЫ", "ГРАФИК РАБОТЫ" in sign, True)
+check("подпись: имя", "Иванов И.И." in sign, True)
+check("подпись: смена 8-15,48", "8-15,48" in sign, True)
 
 print("\nИТОГО ПРОВАЛОВ: %d" % fails)
 sys.exit(1 if fails else 0)
