@@ -25,6 +25,7 @@ from app.core.calendar_rf import get_year_calendar
 from app.core.constants import VALID_WEEK_NORMS
 from app.services.conflict_checker import check_all, Conflict
 from app.services.exporter import export_csv, export_t13_html, export_okud_html, export_signoff_html
+from app.services.scheduler import autofill, copy_schedule
 from app.services.time_parser import parse_cell
 from app.services.xls_importer import import_xls, ImportResult, EmployeeRow
 
@@ -190,6 +191,51 @@ def edit_cell(sid: str,
         row.parsed[day] = parse_cell(value)
     row.total_hours = sum(p.total_hours for p in row.parsed.values())
 
+    conflicts = check_all(res)
+    session["conflicts"] = conflicts
+    payload = _result_to_dict(res, conflicts)
+    payload["session_id"] = sid
+    return JSONResponse(content=payload)
+
+
+@app.post("/api/session/{sid}/autofill")
+def autofill_route(sid: str,
+                   row_index: int = Body(...),
+                   shift: str = Body(...),
+                   mode: str = Body("workdays")) -> JSONResponse:
+    """Заполнить пустые ячейки сотрудника заданной сменой.
+
+    ``mode`` — ``"workdays"`` (только рабочие дни) или ``"empty"`` (все пустые).
+    """
+    session = _sessions.get(sid)
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
+    res: ImportResult = session["result"]
+    try:
+        warnings = autofill(res, row_index, shift, mode)
+    except ValueError as exc:
+        return JSONResponse(status_code=422, content={"error": str(exc)})
+    conflicts = check_all(res)
+    session["conflicts"] = conflicts
+    payload = _result_to_dict(res, conflicts)
+    payload["session_id"] = sid
+    payload["warnings"] = res.warnings + warnings
+    return JSONResponse(content=payload)
+
+
+@app.post("/api/session/{sid}/copy")
+def copy_route(sid: str,
+               from_index: int = Body(...),
+               to_index: int = Body(...)) -> JSONResponse:
+    """Скопировать график одного сотрудника другому (синхронизация врач↔медсестра)."""
+    session = _sessions.get(sid)
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
+    res: ImportResult = session["result"]
+    try:
+        copy_schedule(res, from_index, to_index)
+    except ValueError as exc:
+        return JSONResponse(status_code=422, content={"error": str(exc)})
     conflicts = check_all(res)
     session["conflicts"] = conflicts
     payload = _result_to_dict(res, conflicts)

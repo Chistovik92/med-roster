@@ -97,6 +97,22 @@
           <div class="table-scroll" id="emp-table-wrap"></div>
         </div>
 
+        <div class="card">
+          <h2>Инструменты</h2>
+          <p class="hint">Автозаполнение смен и копирование графиков (синхронизация «врач↔медсестра»).</p>
+          <div class="toolbar">
+            <label>Сотрудник <select id="tool-emp"></select></label>
+            <label>Смена <input type="text" id="tool-shift" placeholder="8-15,48" style="width:96px"></label>
+            <label><input type="checkbox" id="tool-workdays" checked> только рабочие дни</label>
+            <button id="tool-autofill" class="btn primary">Заполнить</button>
+          </div>
+          <div class="toolbar" style="margin:0">
+            <label>Из <select id="tool-from"></select></label>
+            <label>В <select id="tool-to"></select></label>
+            <button id="tool-copy" class="btn">Скопировать график</button>
+          </div>
+        </div>
+
         <div id="traffic-light" class="traffic">
           <span class="tl-dot" id="tl-dot"></span>
           <span id="tl-text">—</span>

@@ -195,11 +195,32 @@
 
   function renderImport(data) {
     document.getElementById("import-results").classList.remove("hidden");
+    applyServerResult(data);
+  }
+
+  function applyServerResult(data) {
     currentData = data;
     renderSummary(data);
     renderConflicts(data.conflicts);
     renderEmployees(data);
     renderTrafficLight(data);
+    populateEmpSelects(data);
+  }
+
+  function populateEmpSelects(data) {
+    var ids = ["tool-emp", "tool-from", "tool-to"];
+    ids.forEach(function (id) {
+      var sel = document.getElementById(id);
+      var prev = sel.value;
+      sel.innerHTML = "";
+      data.employees.forEach(function (emp) {
+        var opt = document.createElement("option");
+        opt.value = emp.index;
+        opt.textContent = emp.name + (emp.position ? " — " + emp.position : "");
+        sel.appendChild(opt);
+      });
+      if (prev && sel.querySelector('option[value="' + prev + '"]')) sel.value = prev;
+    });
   }
 
   function renderSummary(data) {
@@ -364,14 +385,43 @@
           alert("Ошибка сохранения: " + (res.data.error || "неизвестно"));
           return;
         }
-        currentData = res.data;
-        renderSummary(res.data);
-        renderConflicts(res.data.conflicts);
-        renderEmployees(res.data);
-        renderTrafficLight(res.data);
+        applyServerResult(res.data);
       })
       .catch(function (e) { alert("Ошибка сети: " + e); });
   }
+
+  // ---- инструменты: автозаполнение и копирование ----
+  function postTool(url, body) {
+    if (!currentSessionId) return;
+    return fetch("/api/session/" + currentSessionId + url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
+      .then(function (res) {
+        if (!res.ok) { alert("Ошибка: " + (res.data.error || "неизвестно")); return; }
+        applyServerResult(res.data);
+      })
+      .catch(function (e) { alert("Ошибка сети: " + e); });
+  }
+
+  document.getElementById("tool-autofill").addEventListener("click", function () {
+    var rowIndex = parseInt(document.getElementById("tool-emp").value, 10);
+    var shift = document.getElementById("tool-shift").value.trim();
+    var workdays = document.getElementById("tool-workdays").checked;
+    if (!rowIndex) { alert("Выберите сотрудника"); return; }
+    if (!shift) { alert("Введите смену (например, 8-15,48)"); return; }
+    postTool("/autofill", { row_index: rowIndex, shift: shift, mode: workdays ? "workdays" : "empty" });
+  });
+
+  document.getElementById("tool-copy").addEventListener("click", function () {
+    var fromIndex = parseInt(document.getElementById("tool-from").value, 10);
+    var toIndex = parseInt(document.getElementById("tool-to").value, 10);
+    if (!fromIndex || !toIndex) { alert("Выберите обоих сотрудников"); return; }
+    if (fromIndex === toIndex) { alert("Выберите разных сотрудников"); return; }
+    postTool("/copy", { from_index: fromIndex, to_index: toIndex });
+  });
 
   function fmt(x) { return (Math.round(x * 10) / 10).toFixed(1).replace(".", ","); }
   function fmtSigned(x) {
