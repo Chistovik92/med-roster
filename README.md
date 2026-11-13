@@ -53,12 +53,12 @@ chmod +x start.sh
 ./start.sh
 ```
 
-A browser opens at `http://127.0.0.1:8000`.
+A browser opens at `http://127.0.0.1:25625`.
 
 Manually:
 
 ```
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+python -m uvicorn app.main:app --host 127.0.0.1 --port 25625
 ```
 
 ## Structure
@@ -70,12 +70,23 @@ app/
   static/        # frontend (vanilla JS, no React/Node)
   main.py        # FastAPI application
 tests/           # regression tests (run: python tests/test_*.py)
+doc/
+  USAGE.md       # user guide (English)
+  USAGE.ru.md    # user guide (Russian)
+  ARCHITECTURE.md  # project passport (references, norms, architecture, UX, roadmap)
 start.bat        # Windows launcher
 start.sh         # Linux launcher
 requirements.txt
 AGENTS.md        # project memory (decisions, formulas, data)
-ARCHITECTURE.md  # project passport (references, norms, architecture, UX, roadmap)
 ```
+
+## Documentation
+
+- **[User guide (English)](doc/USAGE.md)** and
+  **[Инструкция пользователя (русский)](doc/USAGE.ru.md)** — how to install,
+  launch and use the program.
+- **[ARCHITECTURE.md](doc/ARCHITECTURE.md)** — project passport (references,
+  normative base, norm matrix, architecture, UX, roadmap).
 
 ## Tests
 

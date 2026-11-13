@@ -50,12 +50,12 @@ chmod +x start.sh
 ./start.sh
 ```
 
-Откроется браузер на `http://127.0.0.1:8000`.
+Откроется браузер на `http://127.0.0.1:25625`.
 
 Вручную:
 
 ```
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+python -m uvicorn app.main:app --host 127.0.0.1 --port 25625
 ```
 
 ## Структура
@@ -67,12 +67,23 @@ app/
   static/        # фронтенд (vanilla JS, без React/Node)
   main.py        # FastAPI-приложение
 tests/           # регрессионные тесты (запуск: python tests/test_*.py)
+doc/
+  USAGE.md       # инструкция пользователя (англ.)
+  USAGE.ru.md    # инструкция пользователя (рус.)
+  ARCHITECTURE.md  # паспорт проекта (аналоги, нормы, архитектура, UX, roadmap)
 start.bat        # запуск на Windows
 start.sh         # запуск на Linux
 requirements.txt
 AGENTS.md        # память проекта (решения, формулы, данные)
-ARCHITECTURE.md  # паспорт проекта (аналоги, нормы, архитектура, UX, roadmap)
 ```
+
+## Документация
+
+- **[Инструкция пользователя (русский)](doc/USAGE.ru.md)** и
+  **[User guide (English)](doc/USAGE.md)** — как установить, запустить и
+  пользоваться программой.
+- **[ARCHITECTURE.md](doc/ARCHITECTURE.md)** — паспорт проекта (обзор аналогов,
+  нормативная база, матрица норм, архитектура, UX, roadmap).
 
 ## Тесты
 

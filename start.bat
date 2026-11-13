@@ -4,7 +4,7 @@ cd /d "%~dp0"
 
 echo ==========================================
 echo   med-roster - MedGrafik: Poliklinika
-echo   Server: http://127.0.0.1:8000
+echo   Server: http://127.0.0.1:25625
 echo ==========================================
 echo.
 
@@ -16,7 +16,7 @@ if errorlevel 1 (
 )
 
 rem open the browser after a short delay (server needs a moment to start)
-start "" /b cmd /c "timeout /t 3 >nul & start http://127.0.0.1:8000"
+start "" /b cmd /c "timeout /t 3 >nul & start http://127.0.0.1:25625"
 
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+python -m uvicorn app.main:app --host 127.0.0.1 --port 25625
 pause
