@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Виртуальное окружение
+.venv/
+venv/
+env/
+ENV/
+
+# База данных SQLite (генерируется при запуске)
+*.db
+*.sqlite
+*.sqlite3
+data/*.db
+
+# Исходные данные с персональными данными сотрудников — НЕ в git (152-ФЗ)
+# Файлы остаются локально и подключаются при импорте.
+*.xls
+*.xlsx
+*.docx
+
+# Сгенерированные отчёты / экспорт
+output/
+exports/
+*.tmp
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
