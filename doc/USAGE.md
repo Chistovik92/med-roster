@@ -114,15 +114,31 @@ forms (Т-13, ОКУД 0504421, schedule for signature) and remembered by the br
 
 ## 5. Editing the schedule
 
-- **Click** any day cell to edit it. Enter an interval like `8-15,48` or a
-  status code (`В`, `ОТ`, `Б`, `У`).
+**The grid opens immediately at startup**: an empty schedule for the current
+month is created automatically, so you can start entering data right away. To
+use another month or data source (`.xls` import, a saved month, generation),
+select it in the «Источник данных» card above.
+
+- **Day headings** show the weekday and date («Пн 1», «Вт 2»…). Weekends and
+  public holidays have a grey background; shortened pre-holiday days have a
+  green underline.
+- **Click** a day cell to edit it. Enter an interval like `8-15,48` or a status
+  code (`В`, `ОТ`, `Б`, `У`).
+- **Hotkeys.** When a cell is selected but its input field is not open: **1** —
+  morning shift, **2** — evening shift (duration depends on the employee's week
+  norm), **В** — day off, **О** — vacation, **Б** — sick leave, **У** — study.
+  **Enter**/**F2** opens manual input; **arrow keys** navigate between cells.
+- In the input field, **Enter** saves and moves down, **Tab** saves and moves
+  right, and **Esc** cancels.
 - **Click** a name, job title, rate or week norm to change it. The rate
   (1,00 / 0,75 / 0,50 / 0,25) and the week norm are picked from a list. When the
   job title changes, the norm is re-classified automatically (and can be set
   manually).
 - To add an employee, fill «Ф.И.О.», «Должность», «Ставка» and click
   **«Добавить сотрудника»**. Remove a row with the «✕» button on the right.
-- **Enter** — save; **Esc** — cancel.
+- **«Добавить списком…»** lets you paste several lines in the format
+  «name; job title; rate» (the rate is optional and defaults to 1.00), then add
+  everyone at once with **«Добавить всех»**.
 - Hours, totals and validation are recalculated after every change. For
   manually-entered rows the month norm is computed automatically (Order № 588n)
   and compared with the actual hours.
@@ -195,6 +211,8 @@ python tests/test_conflict_checker.py
 python tests/test_exporter.py
 python tests/test_scheduler.py
 python tests/test_storage.py
+python tests/test_shutdown.py
+python tests/test_bulk_and_meta.py
 ```
 
 ## 11. Stopping the service

@@ -138,7 +138,7 @@
 
         <div class="card">
           <h2>Сотрудники</h2>
-          <p class="hint">Кликните по ячейке (смена/код), а также по Ф.И.О., должности, ставке или норме, чтобы изменить. Enter — сохранить, Esc — отмена. Ставку и норму выбирайте из списка.</p>
+          <p class="hint">Кликните по ячейке дня, чтобы изменить её. Enter — сохранить и перейти вниз, Tab — вправо, Esc — отмена. Когда ячейка просто выделена (без поля ввода), работают горячие клавиши: <b>1</b> — утренняя смена, <b>2</b> — вечерняя, <b>В</b> — выходной, <b>О</b> — отпуск, <b>Б</b> — больничный, <b>У</b> — учёба. Клик по Ф.И.О., должности, ставке или норме — изменить.</p>
           <div class="toolbar add-employee">
             <label>Ф.И.О. <input type="text" id="emp-name" placeholder="Иванова И.И." autocomplete="off"></label>
             <label>Должность <input type="text" id="emp-position" placeholder="вр.пед.уч." autocomplete="off"></label>
@@ -151,6 +151,15 @@
               </select>
             </label>
             <button id="emp-add" class="btn primary">Добавить сотрудника</button>
+            <button id="emp-bulk-toggle" class="btn" type="button">Добавить списком…</button>
+          </div>
+          <div id="emp-bulk-box" class="bulk-box hidden">
+            <p class="hint">По одной строке на сотрудника в формате «Ф.И.О.; должность; ставка». Ставку можно не указывать (по умолчанию 1,00).</p>
+            <textarea id="emp-bulk-text" rows="6" placeholder="Иванова И.И.; вр.пед.уч.; 1&#10;Петрова А.С.; м/с участковая; 0,5&#10;Сидоров П.П.; уборщик"></textarea>
+            <div class="toolbar" style="margin:8px 0 0">
+              <button id="emp-bulk-add" class="btn primary">Добавить всех</button>
+              <button id="emp-bulk-cancel" class="btn" type="button">Скрыть</button>
+            </div>
           </div>
           <div class="table-scroll" id="emp-table-wrap"></div>
         </div>
@@ -160,6 +169,18 @@
           <p class="hint">Автозаполнение смен и копирование графиков (синхронизация «врач↔медсестра»).</p>
           <div class="toolbar">
             <label>Сотрудник <select id="tool-emp"></select></label>
+            <label>Типовая смена
+              <select id="tool-shift-preset">
+                <option value="">— выбрать —</option>
+                <option value="8-15,48">Утро 39 ч · 8-15,48</option>
+                <option value="12,12-20">Вечер 39 ч · 12,12-20</option>
+                <option value="8-16">Утро 40 ч · 8-16</option>
+                <option value="12-20">Вечер 40 ч · 12-20</option>
+                <option value="8-15,12">Утро 36 ч · 8-15,12</option>
+                <option value="8-14,36">Утро 33 ч · 8-14,36</option>
+                <option value="8-14">Утро 30 ч · 8-14</option>
+              </select>
+            </label>
             <label>Смена <input type="text" id="tool-shift" placeholder="8-15,48" style="width:96px"></label>
             <label class="chk"><input type="checkbox" id="tool-workdays" checked> только рабочие дни</label>
             <button id="tool-autofill" class="btn primary">Заполнить</button>
@@ -179,7 +200,7 @@
     </section>
   </main>
 
-  <footer class="footer">med-roster 0.4.5 · Python + FastAPI · работает на Windows 7 / 10 / 11 и Linux</footer>
+  <footer class="footer">med-roster 0.5.0 · Python + FastAPI · работает на Windows 7 / 10 / 11 и Linux</footer>
 
   <script src="/static/app.js"></script>
 </body>

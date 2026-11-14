@@ -19,12 +19,12 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, File, Form, UploadFile, Body
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app import __version__
 from app.core import storage
-from app.core.calendar_rf import get_year_calendar
+from app.core.calendar_rf import get_year_calendar, WEEKDAY_RU
 from app.core.constants import VALID_WEEK_NORMS, DEFAULT_ORG
 from app.services.conflict_checker import check_all, Conflict
 from app.services.exporter import export_csv, export_t13_html, export_okud_html, export_signoff_html
@@ -124,6 +124,24 @@ def _conflict_to_dict(c: Conflict) -> Dict[str, Any]:
     }
 
 
+def _days_meta(res: ImportResult) -> List[Dict[str, Any]]:
+    """Метаданные дней месяца для шапки таблицы: день недели, выходной/сокращённый.
+
+    Нужны фронтенду, чтобы подсвечивать выходные/праздники и предпраздничные дни
+    и подписывать колонки «Пн 1», «Вт 2»… при вводе графика.
+    """
+    cal = get_year_calendar(res.year)
+    meta: List[Dict[str, Any]] = []
+    for d in range(1, res.day_count + 1):
+        info = cal.day(res.month, d)
+        if info is None:
+            meta.append({"day": d, "weekday": "", "off": False, "short": False})
+        else:
+            meta.append({"day": d, "weekday": WEEKDAY_RU[info.weekday],
+                         "off": (not info.is_work), "short": info.is_shortened})
+    return meta
+
+
 def _result_to_dict(res: ImportResult, conflicts: List[Conflict]) -> Dict[str, Any]:
     return {
         "source": os.path.basename(res.source),
@@ -131,6 +149,7 @@ def _result_to_dict(res: ImportResult, conflicts: List[Conflict]) -> Dict[str, A
         "month": res.month,
         "day_count": res.day_count,
         "manual": res.manual,
+        "days_meta": _days_meta(res),
         "employees": [_row_to_dict(r, res) for r in res.rows],
         "conflicts": [_conflict_to_dict(c) for c in conflicts],
         "warnings": res.warnings,
@@ -302,6 +321,44 @@ def add_employee(sid: str,
     idx = max([r.index for r in res.rows], default=-1) + 1
     res.rows.append(EmployeeRow(index=idx, name=name, position=position,
                                 rate=float(rate), week_norm=week_norm))
+    return _refresh_session(sid)
+
+
+@app.post("/api/session/{sid}/employees/bulk")
+def add_employees_bulk(sid: str,
+                       employees: List[Dict[str, Any]] = Body(..., embed=True)) -> JSONResponse:
+    """Массовое добавление сотрудников (список {name, position, rate}).
+
+    Используется кнопкой «Добавить списком»: вставляется многострочный текст
+    «ФИО; должность; ставка» и все строки добавляются одним запросом.
+    """
+    session = _get_session(sid)
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
+    res: ImportResult = session["result"]
+
+    added = 0
+    for e in employees:
+        name = (e.get("name") or "").strip()
+        if not name:
+            continue
+        position = (e.get("position") or "").strip()
+        try:
+            rate = float(e.get("rate", 1.0) or 1.0)
+        except (TypeError, ValueError):
+            rate = 1.0
+        if rate <= 0 or rate > 2:
+            rate = 1.0
+        week_norm = None
+        if position:
+            week_norm, _r = classify(position)
+        idx = max([r.index for r in res.rows], default=-1) + 1
+        res.rows.append(EmployeeRow(index=idx, name=name, position=position,
+                                    rate=float(rate), week_norm=week_norm))
+        added += 1
+    if added == 0:
+        return JSONResponse(status_code=422,
+                            content={"error": "нет корректных строк (нужно Ф.И.О.)"})
     return _refresh_session(sid)
 
 

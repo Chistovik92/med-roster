@@ -28,8 +28,28 @@
   }
   function fmtRate(r) {
     if (r === 1) return "1,00";
-    return String(Math.round(r * 100) / 100).replace(".", ",");
+    return (Math.round(r * 100) / 100).toFixed(2).replace(".", ",");
   }
+
+  // Типовые смены для горячих клавиш 1 (утро) / 2 (вечер) по недельной норме.
+  // Длительность = W_нед/5: 40→8,0; 39→7,8; 36→7,2; 33→6,6; 30→6,0 ч.
+  var SHIFT_PRESETS = {
+    40: ["8-16", "12-20"],
+    39: ["8-15,48", "12,12-20"],
+    36: ["8-15,12", "12-19,12"],
+    33: ["8-14,36", "13-19,36"],
+    30: ["8-14", "12-18"]
+  };
+  var DEFAULT_PRESET = SHIFT_PRESETS[39];
+
+  // Горячие клавиши для выделенной (не редактируемой) ячейки.
+  // Цифры — смены, буквы — коды статусов (рус. и лат. раскладка).
+  var HOTKEYS = {
+    "в": "В", "v": "В",
+    "о": "ОТ", "o": "ОТ",
+    "б": "Б", "b": "Б",
+    "у": "У", "u": "У"
+  };
 
   function jsonFetch(url, opts) {
     return fetch(url, opts).then(function (r) {
@@ -119,6 +139,15 @@
   var empTbody = null;   // ссылка на tbody таблицы сотрудников (для инкремента)
 
   function manualMode() { return !!(currentData && currentData.manual); }
+  function dayOff(day) {
+    if (!currentData || !currentData.days_meta) return false;
+    var m = currentData.days_meta[day - 1];
+    return !!(m && m.off);
+  }
+  function dayMeta(day) {
+    if (!currentData || !currentData.days_meta) return null;
+    return currentData.days_meta[day - 1] || null;
+  }
   function empById(empIndex) {
     if (!currentData) return null;
     for (var i = 0; i < currentData.employees.length; i++)
@@ -339,6 +368,8 @@
 
   function applyServerResult(data, changedIndices) {
     currentData = data;
+    // если выделенная ячейка была перерисована — сбрасываем выделение
+    if (selectedTd && !document.contains(selectedTd)) selectedTd = null;
     document.getElementById("period-label").textContent =
       MONTHS[data.month - 1] + " " + data.year + (data.manual ? " · вручную" : "");
     renderSummary(data);
@@ -445,11 +476,13 @@
       var td = el("td", "editable");
       td.dataset.row = emp.index;
       td.dataset.day = d2;
+      td.tabIndex = 0;
       if (!cell || cell.kind === "empty") { td.className = "editable cell-empty"; td.textContent = "·"; }
       else if (cell.kind === "shift") { td.className = "editable cell-shift"; td.textContent = cell.raw; }
       else if (cell.kind === "status") { td.className = "editable cell-status"; td.textContent = cell.raw; }
       else if (cell.kind === "invalid") { td.className = "editable cell-invalid"; td.textContent = cell.raw || "!"; td.title = cell.error || cell.raw; }
       else { td.className = "editable cell-empty"; td.textContent = "·"; }
+      if (dayOff(d2)) td.className += " col-off";
       tr.appendChild(td);
     }
 
@@ -495,7 +528,16 @@
     hr.appendChild(el("th", "", "Должность"));
     hr.appendChild(el("th", "", "Ставка"));
     hr.appendChild(el("th", "", "Норма"));
-    for (var d = 1; d <= data.day_count; d++) hr.appendChild(el("th", "", String(d)));
+    for (var d = 1; d <= data.day_count; d++) {
+      var th = el("th", "day");
+      var meta = dayMeta(d);
+      th.appendChild(el("span", "dow", meta ? meta.weekday : ""));
+      th.appendChild(el("span", "dnum", String(d)));
+      if (meta && meta.off) th.className += " off";
+      if (meta && meta.short) th.className += " short";
+      if (meta && meta.short) th.title = "Сокращённый (предпраздничный) день";
+      hr.appendChild(th);
+    }
     hr.appendChild(el("th", "", "Часы"));
     if (!manual) hr.appendChild(el("th", "", "Сумма"));
     hr.appendChild(el("th", "", "Прим."));
@@ -548,6 +590,55 @@
     });
   }
 
+  // ---- выделение ячеек (для горячих клавиш и навигации) ----
+  var selectedTd = null;
+
+  function selectCell(td) {
+    if (selectedTd && selectedTd !== td) selectedTd.classList.remove("selected");
+    selectedTd = td || null;
+    if (selectedTd) {
+      selectedTd.classList.add("selected");
+      try { selectedTd.focus(); } catch (e) {}
+    }
+  }
+
+  function findCell(rowIndex, day) {
+    var wrap = document.getElementById("emp-table-wrap");
+    var tds = wrap.querySelectorAll("td.editable");
+    for (var i = 0; i < tds.length; i++) {
+      if (parseInt(tds[i].dataset.row, 10) === rowIndex &&
+          parseInt(tds[i].dataset.day, 10) === day) return tds[i];
+    }
+    return null;
+  }
+
+  function navTarget(rowIndex, day, dir) {
+    if (!currentData) return null;
+    if (dir === "right") {
+      if (day + 1 <= currentData.day_count) return { row: rowIndex, day: day + 1 };
+      return null;
+    }
+    if (dir === "left") {
+      if (day - 1 >= 1) return { row: rowIndex, day: day - 1 };
+      return null;
+    }
+    var emps = currentData.employees;
+    for (var i = 0; i < emps.length; i++) {
+      if (emps[i].index === rowIndex) {
+        if (dir === "down" && i + 1 < emps.length) return { row: emps[i + 1].index, day: day };
+        if (dir === "up" && i - 1 >= 0) return { row: emps[i - 1].index, day: day };
+        return null;
+      }
+    }
+    return null;
+  }
+
+  function goTo(target) {
+    if (!target) return;
+    var ntd = findCell(target.row, target.day);
+    if (ntd) selectCell(ntd);
+  }
+
   // ---- редактирование (делегирование) ----
   document.getElementById("emp-table-wrap").addEventListener("click", function (ev) {
     var td = ev.target;
@@ -557,9 +648,51 @@
     if (td.classList.contains("editable")) startEdit(td);
   });
 
+  // клик вне таблицы — снять выделение (чтобы горячие клавиши не срабатывали)
+  document.addEventListener("click", function (ev) {
+    var wrap = document.getElementById("emp-table-wrap");
+    if (selectedTd && !wrap.contains(ev.target)) {
+      selectedTd.classList.remove("selected");
+      selectedTd = null;
+    }
+  });
+
+  // ---- горячие клавиши и навигация по выделенной ячейке ----
+  document.addEventListener("keydown", function (ev) {
+    // не вмешиваемся, если идёт ввод в поле (редактирование)
+    var ae = document.activeElement;
+    if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.tagName === "SELECT")) return;
+    var td = selectedTd;
+    if (!td || !document.contains(td) || !td.classList.contains("editable")) return;
+    var rowIndex = parseInt(td.dataset.row, 10);
+    var day = parseInt(td.dataset.day, 10);
+
+    if (ev.key === "Enter" || ev.key === "F2") { ev.preventDefault(); startEdit(td); return; }
+
+    if (ev.key === "ArrowRight") { ev.preventDefault(); goTo(navTarget(rowIndex, day, "right")); return; }
+    if (ev.key === "ArrowLeft") { ev.preventDefault(); goTo(navTarget(rowIndex, day, "left")); return; }
+    if (ev.key === "ArrowDown") { ev.preventDefault(); goTo(navTarget(rowIndex, day, "down")); return; }
+    if (ev.key === "ArrowUp") { ev.preventDefault(); goTo(navTarget(rowIndex, day, "up")); return; }
+
+    if (ev.key === "1" || ev.key === "2") {
+      ev.preventDefault();
+      var emp = empById(rowIndex);
+      var preset = (emp && SHIFT_PRESETS[emp.week_norm]) || DEFAULT_PRESET;
+      saveCell(rowIndex, day, ev.key === "1" ? preset[0] : preset[1]);
+      return;
+    }
+
+    var k = (ev.key || "").toLowerCase();
+    if (HOTKEYS[k]) {
+      ev.preventDefault();
+      saveCell(rowIndex, day, HOTKEYS[k]);
+    }
+  });
+
   function startEdit(td) {
     var raw = td.textContent;
     if (raw === "·") raw = "";
+    selectCell(td);
     td.classList.add("editing");
     td.dataset.prev = td.textContent;
     td.innerHTML = "";
@@ -570,22 +703,24 @@
     input.select();
 
     var finished = false;
-    function commit() {
+    function commit(navDir) {
       if (finished) return;
       finished = true;
       var val = input.value.trim();
       var rowIndex = parseInt(td.dataset.row, 10);
       var day = parseInt(td.dataset.day, 10);
-      saveCell(rowIndex, day, val);
+      saveCell(rowIndex, day, val, navDir);
     }
     function cancel() {
       if (finished) return;
       finished = true;
       td.classList.remove("editing");
       td.textContent = td.dataset.prev;
+      selectCell(td);
     }
     input.addEventListener("keydown", function (ev) {
-      if (ev.key === "Enter") { ev.preventDefault(); commit(); }
+      if (ev.key === "Enter") { ev.preventDefault(); commit("down"); }
+      else if (ev.key === "Tab") { ev.preventDefault(); commit("right"); }
       else if (ev.key === "Escape") { ev.preventDefault(); cancel(); }
     });
     input.addEventListener("blur", function () {
@@ -661,7 +796,7 @@
     input.addEventListener("blur", function () { if (!finished) commit(); });
   }
 
-  function saveCell(rowIndex, day, value) {
+  function saveCell(rowIndex, day, value, navDir) {
     if (!currentSessionId) return;
     jsonFetch("/api/session/" + currentSessionId + "/cell", {
       method: "POST",
@@ -670,6 +805,7 @@
     }).then(function (res) {
       if (!res.ok) { alert("Ошибка сохранения: " + (res.data.error || "неизвестно")); fullRefresh(currentData); return; }
       applyServerResult(res.data, [rowIndex]);
+      if (navDir) goTo(navTarget(rowIndex, day, navDir));
     }).catch(function (e) { alert("Ошибка сети: " + e); });
   }
 
@@ -724,6 +860,45 @@
     if (ev.key === "Enter") addEmployee();
   });
 
+  // ---- массовое добавление сотрудников ----
+  document.getElementById("emp-bulk-toggle").addEventListener("click", function () {
+    document.getElementById("emp-bulk-box").classList.toggle("hidden");
+  });
+  document.getElementById("emp-bulk-cancel").addEventListener("click", function () {
+    document.getElementById("emp-bulk-box").classList.add("hidden");
+  });
+  document.getElementById("emp-bulk-add").addEventListener("click", function () {
+    if (!currentSessionId) { setStatus("Сначала создайте или откройте график", "error"); return; }
+    var text = document.getElementById("emp-bulk-text").value;
+    var employees = [];
+    text.split(/\r?\n/).forEach(function (line) {
+      var t = line.trim();
+      if (!t) return;
+      var parts = t.split(";");
+      var name = (parts[0] || "").trim();
+      if (!name) return;
+      var position = (parts[1] || "").trim();
+      var rate = 1.0;
+      if (parts.length > 2) {
+        var rv = parseFloat((parts[2] || "").trim().replace(",", "."));
+        if (!isNaN(rv) && rv > 0) rate = rv;
+      }
+      employees.push({ name: name, position: position, rate: rate });
+    });
+    if (!employees.length) { setStatus("Нет строк для добавления (формат: Ф.И.О.; должность; ставка)", "error"); return; }
+    jsonFetch("/api/session/" + currentSessionId + "/employees/bulk", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ employees: employees })
+    }).then(function (res) {
+      if (!res.ok) { setStatus("Ошибка: " + (res.data.error || "неизвестно"), "error"); return; }
+      document.getElementById("emp-bulk-text").value = "";
+      document.getElementById("emp-bulk-box").classList.add("hidden");
+      setStatus("Добавлено сотрудников: " + employees.length, "ok");
+      fullRefresh(res.data);
+    }).catch(function (e) { setStatus("Ошибка сети: " + e, "error"); });
+  });
+
   // ---- инструменты: автозаполнение и копирование ----
   function postTool(url, body, changedIndices) {
     if (!currentSessionId) return;
@@ -737,8 +912,12 @@
     }).catch(function (e) { alert("Ошибка сети: " + e); });
   }
 
-  document.getElementById("tool-autofill").addEventListener("click", function () {
-    var rowIndex = parseInt(document.getElementById("tool-emp").value, 10);
+  // ---- типовая смена: подставить в поле ввода ----
+  document.getElementById("tool-shift-preset").addEventListener("change", function () {
+    if (this.value) document.getElementById("tool-shift").value = this.value;
+  });
+
+  document.getElementById("tool-autofill").addEventListener("click", function () {    var rowIndex = parseInt(document.getElementById("tool-emp").value, 10);
     var shift = document.getElementById("tool-shift").value.trim();
     var workdays = document.getElementById("tool-workdays").checked;
     if (!rowIndex) { alert("Выберите сотрудника"); return; }
@@ -783,7 +962,31 @@
     });
   }
 
+  // ---- автооткрытие графика на текущий месяц ----
+  // Чтобы можно было сразу вносить данные в таблицу, при старте создаём пустой
+  // график на текущий месяц. Импорт / загрузка сохранённого / генерация остаются
+  // доступны в карточке «Источник данных» выше.
+  function autoOpenSchedule() {
+    var now = new Date();
+    var y = now.getFullYear();
+    var m = now.getMonth() + 1;
+    document.getElementById("manual-year").value = y;
+    document.getElementById("manual-month").value = m;
+    jsonFetch("/api/schedule", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ year: y, month: m })
+    }).then(function (res) {
+      if (!res.ok) return;
+      currentSessionId = res.data.session_id;
+      setStatus("Открыт график на " + MONTHS[m - 1] + " " + y +
+        ". Добавьте сотрудников и заполните смены — или импортируйте .xls / загрузите сохранённый месяц выше.", "ok");
+      fullRefresh(res.data);
+    }).catch(function () { /* без автооткрытия — можно начать вручную */ });
+  }
+
   // ---- старт ----
   loadCalendar(parseInt(document.getElementById("cal-year").value, 10) || 2026);
   refreshSaved();
+  autoOpenSchedule();
 })();

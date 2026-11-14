@@ -40,9 +40,12 @@ and `packaging/`).
   3. missing pre-holiday day shortening;
   4. duplicate rows;
   5. hour-total mismatches.
-- **In-browser editing**: click a cell, Enter to save, Esc to cancel; auto-fill
-  shifts and copy schedules ("doctor ↔ nurse"); bottom "traffic light"
-  (green/yellow/red).
+- **In-browser editing**: the grid opens right at startup (empty schedule for the
+  current month); click a cell, Enter to save and move down, Tab to move right,
+  Esc to cancel; arrow-key navigation; hotkeys `1`/`2` (preset shifts) and
+  `В`/`О`/`Б`/`У` (status codes); weekend/pre-holiday highlighting; auto-fill
+  shifts and copy schedules ("doctor ↔ nurse"); bulk-adding employees from a
+  list; bottom "traffic light" (green/yellow/red).
 - **Export**: corrected schedule (CSV) and printable forms — T-13, OKUD 0504421,
   schedule for approval/signature.
 
@@ -117,6 +120,9 @@ python tests/test_xls_importer.py
 python tests/test_conflict_checker.py
 python tests/test_exporter.py
 python tests/test_scheduler.py
+python tests/test_storage.py
+python tests/test_shutdown.py
+python tests/test_bulk_and_meta.py
 ```
 
 > `.xls` files containing personal data of employees are **not** committed to the
