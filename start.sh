@@ -14,4 +14,12 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 1
 fi
 
+# Проверка: не запущен ли уже сервис на порту 25625.
+if (echo > /dev/tcp/127.0.0.1/25625) 2>/dev/null; then
+    echo
+    echo "[ПРЕДУПРЕЖДЕНИЕ] Сервис уже запущен на порту 25625."
+    echo "Остановите его (./stop.sh или кнопка «Выключить сервис») и повторите."
+    exit 1
+fi
+
 python3 -m uvicorn app.main:app --host 127.0.0.1 --port 25625

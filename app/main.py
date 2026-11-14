@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -178,6 +179,41 @@ def index() -> FileResponse:
 @app.get("/api/health")
 def health() -> Dict[str, Any]:
     return {"status": "ok", "app": "med-roster", "version": __version__}
+
+
+# --------------------------------------------------------------------------- #
+#  Остановка сервиса
+# --------------------------------------------------------------------------- #
+# Пауза перед завершением процесса — чтобы ответ клиенту успел уйти по сети.
+SHUTDOWN_DELAY = 0.5
+
+
+def _stop_process() -> None:
+    """Немедленно завершить процесс (не вызывать напрямую в тестах)."""
+    os._exit(0)
+
+
+def _schedule_shutdown() -> None:
+    """Запланировать остановку сервера через короткую паузу.
+
+    Остановка выполняется в фоновом потоке: обработчик успевает вернуть ответ
+    клиенту, после чего процесс завершается принудительно (``os._exit``). Это
+    надёжно работает во всех режимах запуска — ``run.py`` (в т.ч. PyInstaller
+    GUI-сборка) и ``python -m uvicorn app.main:app`` из start.bat / start.sh.
+    """
+    def _stop() -> None:
+        time.sleep(SHUTDOWN_DELAY)
+        _stop_process()
+
+    threading.Thread(target=_stop, daemon=True).start()
+
+
+@app.post("/api/shutdown")
+def shutdown() -> JSONResponse:
+    """Остановить сервис (завершить процесс сервера)."""
+    _schedule_shutdown()
+    return JSONResponse(content={"status": "stopping",
+                                 "message": "Сервис останавливается…"})
 
 
 @app.get("/api/calendar/{year}")

@@ -60,6 +60,11 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 25625
 
 The web panel opens at **http://127.0.0.1:25625**.
 
+> **Re-launching.** The app occupies port 25625, so you can't run a second copy
+> (or a new version) at the same time. If a launch reports that the service is
+> already running, stop the running copy (see section 11) and start again. The
+> `run.py` launcher detects a running copy and offers to stop it and continue.
+
 ## 4. Interface
 
 The panel has two tabs.
@@ -191,3 +196,23 @@ python tests/test_exporter.py
 python tests/test_scheduler.py
 python tests/test_storage.py
 ```
+
+## 11. Stopping the service
+
+The app runs as a background web server on port 25625. To stop it cleanly (for
+example, before launching a new version):
+
+- **The «Выключить сервис» («Shut down service») button** in the top-right corner
+  of the panel — the simplest way. A «Сервис остановлен» screen appears and you
+  can close the tab.
+- **`stop.bat`** (Windows) — double-click to stop the process listening on port
+  25625.
+- **`stop.sh`** (Linux) — `./stop.sh` (uses `fuser`, falling back to `lsof`).
+
+If an old version is running without the «Выключить» button, use `stop.bat` /
+`stop.sh` — they work with any version.
+
+> **Why this matters.** A new version cannot take port 25625 while an old one is
+> still running, so stop the old copy before launching an update. Since 0.4.5 the
+> launcher handles this automatically: it detects the running copy and offers to
+> stop it in one step.

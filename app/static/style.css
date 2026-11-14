@@ -75,6 +75,7 @@ h1 { font-size: 18px; margin: 0; font-weight: 650; }
 }
 
 .tabs { display: flex; gap: 6px; }
+.topbar-right { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .tab {
   border: 1px solid var(--line);
   background: var(--card);

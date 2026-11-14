@@ -754,6 +754,35 @@
     postTool("/copy", { from_index: fromIndex, to_index: toIndex }, [toIndex]);
   });
 
+  // ---- выключение сервиса ----
+  var shutdownBtn = document.getElementById("shutdown-btn");
+  if (shutdownBtn) {
+    shutdownBtn.addEventListener("click", function () {
+      if (!confirm("Остановить сервис «МедГрафик: Поликлиника»?\n\n" +
+                   "Для повторного запуска используйте ярлык на рабочем столе " +
+                   "или start.bat / start.sh.")) {
+        return;
+      }
+      shutdownBtn.disabled = true;
+      shutdownBtn.textContent = "Останавливаю…";
+      function showStopped() {
+        document.body.textContent = "";
+        var box = document.createElement("div");
+        box.style.cssText = "padding:70px 24px;text-align:center;" +
+          "font-family:\"Segoe UI\",system-ui,sans-serif;color:#1a2332;";
+        var h = document.createElement("h2");
+        h.textContent = "Сервис остановлен";
+        var p = document.createElement("p");
+        p.textContent = "Эту вкладку можно закрыть. Для нового запуска откройте " +
+          "программу заново (ярлык / start.bat / start.sh).";
+        box.appendChild(h);
+        box.appendChild(p);
+        document.body.appendChild(box);
+      }
+      fetch("/api/shutdown", { method: "POST" }).then(showStopped).catch(showStopped);
+    });
+  }
+
   // ---- старт ----
   loadCalendar(parseInt(document.getElementById("cal-year").value, 10) || 2026);
   refreshSaved();

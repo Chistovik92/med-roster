@@ -8,12 +8,18 @@
   * напрямую — ``python run.py``;
   * сборкой в один исполняемый файл (PyInstaller) — см. ``packaging/``.
 """
+import json
 import os
+import re
+import shutil
+import signal
+import subprocess
 import sys
 import tempfile
 import threading
 import time
 import traceback
+import urllib.request
 import webbrowser
 
 import uvicorn
@@ -64,8 +70,114 @@ def _open_browser() -> None:
         pass
 
 
+def _check_existing_instance(host: str, port: int) -> bool:
+    """Вернуть True, если на порту уже работает другой экземпляр med-roster.
+
+    Стучится в ``/api/health`` уже запущенного сервера: если тот отвечает
+    ``app == "med-roster"``, значит на порту крутится прежняя версия (например,
+    0.3.0), и новый запуск упрётся в «address already in use». Позволяет
+    показать понятное сообщение вместо трассировки uvicorn.
+    """
+    try:
+        req = urllib.request.urlopen(
+            "http://%s:%d/api/health" % (host, port), timeout=1.5)
+        data = json.loads(req.read().decode("utf-8"))
+        return data.get("app") == "med-roster"
+    except Exception:
+        # нет соединения / не наш сервис / таймаут — порт свободен или занят чужим
+        return False
+
+
+def _find_pids_on_port(port: int) -> "set":
+    """Найти PID процессов, слушающих заданный TCP-порт. Вернуть множество."""
+    pids = set()
+    try:
+        if sys.platform == "win32":
+            out = subprocess.check_output(
+                ["netstat", "-aon"], text=True, stderr=subprocess.DEVNULL)
+            for line in out.splitlines():
+                if (":%d " % port) in line and "LISTENING" in line:
+                    parts = line.split()
+                    if parts:
+                        try:
+                            pids.add(int(parts[-1]))
+                        except ValueError:
+                            pass
+        else:
+            # Linux: ss, затем lsof
+            if shutil.which("ss"):
+                out = subprocess.check_output(
+                    ["ss", "-tlnp"], text=True, stderr=subprocess.DEVNULL)
+                for line in out.splitlines():
+                    if (":%d " % port) in line:
+                        m = re.search(r"pid=(\d+)", line)
+                        if m:
+                            pids.add(int(m.group(1)))
+            elif shutil.which("lsof"):
+                out = subprocess.check_output(
+                    ["lsof", "-ti", "tcp:%d" % port],
+                    text=True, stderr=subprocess.DEVNULL)
+                for tok in out.split():
+                    if tok.isdigit():
+                        pids.add(int(tok))
+    except Exception:
+        pass
+    return pids
+
+
+def _stop_existing_instance(port: int) -> bool:
+    """Завершить процесс(ы), слушающие порт. Вернуть True, если что-то убито."""
+    pids = _find_pids_on_port(port)
+    killed = False
+    for pid in pids:
+        try:
+            if sys.platform == "win32":
+                subprocess.run(["taskkill", "/PID", str(pid), "/F"],
+                               capture_output=True, check=False)
+            else:
+                os.kill(pid, signal.SIGTERM)
+            killed = True
+        except Exception:
+            pass
+    if killed:
+        time.sleep(0.5)  # дать процессу освободить порт
+    return killed
+
+
+def _confirm_stop() -> bool:
+    """Спросить пользователя, остановить ли уже запущенную версию. True = да."""
+    message = ("«МедГрафик: Поликлиника» уже запущена.\n\n"
+               "Остановить работающую версию и запустить эту?")
+    try:
+        if sys.platform == "win32":
+            import ctypes
+            result = ctypes.windll.user32.MessageBoxW(
+                None, message, "МедГрафик: Поликлиника", 0x04)  # MB_YESNO
+            return result == 6  # IDYES
+    except Exception:
+        pass
+    # консольный режим (Linux / Windows из терминала)
+    try:
+        answer = input(message + " [y/N] ").strip().lower()
+        return answer in ("y", "yes", "д", "да")
+    except Exception:
+        return False
+
+
 def main() -> None:
     _ensure_stdio()
+    if _check_existing_instance(HOST, PORT):
+        # Уже запущена прежняя версия — предлагаем остановить её, чтобы новая
+        # могла занять порт 25625.
+        if not _confirm_stop():
+            return
+        _stop_existing_instance(PORT)
+        if _check_existing_instance(HOST, PORT):
+            _show_error(
+                "Не удалось остановить работающую версию.\n\n"
+                "Завершите процесс вручную (Диспетчер задач или stop.bat / "
+                "stop.sh) и запустите программу снова.")
+            return
     threading.Thread(target=_open_browser, daemon=True).start()
     # log_level="warning" — меньше шума; на слабом железе меньше накладных расходов.
     uvicorn.run(app, host=HOST, port=PORT, log_level="warning")
