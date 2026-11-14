@@ -17,13 +17,16 @@ ROOT="$(pwd)"
 OUT="$ROOT/packaging/output"
 STAGE="$ROOT/build/linux-stage"
 APP_DIR="$STAGE/opt/med-roster"
+USR_BIN="$STAGE/usr/bin"
+USR_APPS="$STAGE/usr/share/applications"
+USR_ICONS="$STAGE/usr/share/icons/hicolor/scalable/apps"
 
 # --- версия из app/__init__.py ---
 VERSION="$(python3 packaging/get_version.py)"
 ARCH="amd64"
 
 rm -rf "$OUT" "$STAGE"
-mkdir -p "$OUT" "$APP_DIR"
+mkdir -p "$OUT" "$APP_DIR" "$USR_BIN" "$USR_APPS" "$USR_ICONS"
 
 echo "Сборка med-roster v${VERSION} (Linux, ${ARCH})"
 
@@ -31,6 +34,12 @@ echo "Сборка med-roster v${VERSION} (Linux, ${ARCH})"
 cp -r "$ROOT/app" "$APP_DIR/app"
 cp "$ROOT/run.py" "$APP_DIR/run.py"
 cp "$ROOT/requirements.txt" "$APP_DIR/requirements.txt"
+
+# --- системные файлы: лаунчер, ярлык меню, иконка ---
+cp "$ROOT/packaging/linux/med-roster" "$USR_BIN/med-roster"
+chmod +x "$USR_BIN/med-roster"
+cp "$ROOT/packaging/linux/med-roster.desktop" "$USR_APPS/med-roster.desktop"
+cp "$ROOT/packaging/linux/med-roster.svg" "$USR_ICONS/med-roster.svg"
 
 # --- переносимая сборка tar.gz ---
 echo "[1/3] переносимый архив tar.gz"
@@ -41,6 +50,8 @@ chmod +x "$STAGE/med-roster/start.sh"
 tar -C "$STAGE" -czf "$OUT/med-roster-${VERSION}.tar.gz" med-roster
 
 # --- .deb / .rpm через fpm ---
+# Важно для fpm >= 1.16: все флаги ДО позиционных аргументов, а исходные пути —
+# только относительные к -C (иначе fpm удваивает путь и падает с «Cannot chdir»).
 if command -v fpm >/dev/null 2>&1; then
     echo "[2/3] сборка .deb"
     fpm -s dir -t deb \
@@ -49,24 +60,21 @@ if command -v fpm >/dev/null 2>&1; then
         --url "https://github.com/Chistovik92/med-roster" \
         --depends "python3" --depends "python3-venv" --depends "python3-pip" \
         --after-install "$ROOT/packaging/linux/after-install.sh" \
-        -C "$STAGE" opt/med-roster \
-        "$ROOT/packaging/linux/med-roster=/usr/bin/med-roster" \
-        "$ROOT/packaging/linux/med-roster.desktop=/usr/share/applications/med-roster.desktop" \
-        "$ROOT/packaging/linux/med-roster.svg=/usr/share/icons/hicolor/scalable/apps/med-roster.svg" \
-        -p "$OUT/med-roster_${VERSION}_${ARCH}.deb"
+        -p "$OUT/med-roster_${VERSION}_${ARCH}.deb" \
+        -C "$STAGE" \
+        opt usr
 
     echo "[3/3] сборка .rpm"
+    # На Fedora/Simply Linux нет пакета python3-venv (venv идёт вместе с pip).
     fpm -s dir -t rpm \
         -n med-roster -v "$VERSION" -a x86_64 \
         --description "Расчёт графиков сменности и табелей рабочего времени" \
         --url "https://github.com/Chistovik92/med-roster" \
-        --depends "python3" --depends "python3-venv" --depends "python3-pip" \
+        --depends "python3" --depends "python3-pip" \
         --after-install "$ROOT/packaging/linux/after-install.sh" \
-        -C "$STAGE" opt/med-roster \
-        "$ROOT/packaging/linux/med-roster=/usr/bin/med-roster" \
-        "$ROOT/packaging/linux/med-roster.desktop=/usr/share/applications/med-roster.desktop" \
-        "$ROOT/packaging/linux/med-roster.svg=/usr/share/icons/hicolor/scalable/apps/med-roster.svg" \
-        -p "$OUT/med-roster-${VERSION}.x86_64.rpm"
+        -p "$OUT/med-roster-${VERSION}.x86_64.rpm" \
+        -C "$STAGE" \
+        opt usr
 else
     echo "[ПРОПУСК] fpm не найден — .deb/.rpm не собраны (см. CI release.yml)."
 fi
