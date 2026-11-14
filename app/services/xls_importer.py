@@ -60,13 +60,83 @@ class EmployeeRow:
 
 @dataclass
 class ImportResult:
-    """Результат импорта одного файла."""
+    """Результат импорта одного файла (или ручного ввода)."""
     source: str
     year: int
     month: int
     day_count: int
+    manual: bool = False
     rows: List[EmployeeRow] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
+
+
+MANUAL_SOURCE = "вручную"
+
+
+def create_manual_schedule(year: int, month: int) -> ImportResult:
+    """Создать пустой график для ручного ввода на заданный период."""
+    if not (1 <= month <= 12):
+        raise ValueError("неверный месяц: %r" % month)
+    day_count = calendar.monthrange(year, month)[1]
+    return ImportResult(source=MANUAL_SOURCE, year=year, month=month,
+                        day_count=day_count, manual=True)
+
+
+def serialize_result(result: ImportResult) -> Dict:
+    """Сериализовать график в словарь (для сохранения в БД / файл).
+
+    Хранит только данные, необходимые для восстановления: сотрудники
+    (ФИО/должность/ставка/норма) и ячейки дней (сырые строки). Разобранные
+    интервалы и итоги пересчитываются при загрузке.
+    """
+    employees = []
+    for r in result.rows:
+        employees.append({
+            "name": r.name,
+            "position": r.position,
+            "rate": r.rate,
+            "week_norm": r.week_norm,
+            "days": {str(d): v for d, v in r.raw_cells.items() if v != ""},
+        })
+    return {
+        "year": result.year,
+        "month": result.month,
+        "source": result.source,
+        "manual": result.manual,
+        "employees": employees,
+    }
+
+
+def deserialize_result(data: Dict) -> ImportResult:
+    """Восстановить график из словаря (после ``serialize_result``)."""
+    year = int(data["year"])
+    month = int(data["month"])
+    day_count = calendar.monthrange(year, month)[1]
+    result = ImportResult(
+        source=data.get("source", "сохранено"),
+        year=year, month=month, day_count=day_count,
+        manual=bool(data.get("manual", False)),
+    )
+    for i, e in enumerate(data.get("employees", [])):
+        name = e.get("name", "") or ""
+        position = e.get("position", "") or ""
+        try:
+            rate = float(e.get("rate", 1.0) or 1.0)
+        except (TypeError, ValueError):
+            rate = 1.0
+        week_norm = e.get("week_norm")
+        if week_norm is not None:
+            week_norm = int(week_norm)
+        row = EmployeeRow(index=i, name=name, position=position,
+                          rate=rate, week_norm=week_norm)
+        for dk, v in (e.get("days") or {}).items():
+            d = int(dk)
+            raw = str(v)
+            row.raw_cells[d] = raw
+            row.parsed[d] = parse_cell(raw)
+        row.total_hours = sum(p.total_hours for p in row.parsed.values())
+        result.rows.append(row)
+    return result
 
 
 def _to_float(value) -> Optional[float]:

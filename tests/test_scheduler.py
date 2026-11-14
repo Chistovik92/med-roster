@@ -5,7 +5,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.services.xls_importer import ImportResult, EmployeeRow
 from app.services.time_parser import parse_cell
-from app.services.scheduler import autofill, copy_schedule
+from app.services.scheduler import autofill, copy_schedule, generate_month
 
 fails = 0
 def check(name, actual, expected):
@@ -82,6 +82,29 @@ check("copy: день 2 скопирован", dst.raw_cells[2], "8-15,48")
 check("copy: день 3 скопирован", dst.raw_cells[3], "8-15,48")
 check("copy: код В скопирован", dst.raw_cells[4], "В")
 check("copy: часов совпадает", round(dst.total_hours, 1), 15.6)
+
+# --- generate_month --------------------------------------------------------- #
+src = res_for([
+    mk_row(12, "Врач", "вр.пед.уч.", week_norm=39, rate=0.5,
+           days={2: "8-15,48", 3: "8-15,48"}),
+])
+g = generate_month(src, 2026, 12, copy_shifts=False)
+check("generate: месяц", (g.year, g.month), (2026, 12))
+check("generate: состав перенесён", len(g.rows), 1)
+check("generate: имя", g.rows[0].name, "Врач")
+check("generate: ставка", g.rows[0].rate, 0.5)
+check("generate: норма", g.rows[0].week_norm, 39)
+check("generate: без смен — часы 0", g.rows[0].total_hours, 0.0)
+
+# с переносом смен по дням недели: 2 и 3 ноября 2026 — пн и вт
+g2 = generate_month(src, 2026, 12, copy_shifts=True)
+filled = [d for d in range(1, g2.day_count + 1)
+          if g2.rows[0].raw_cells.get(d, "") != ""]
+# в декабре 2026 понедельников и вторников по 5 → 10 заполненных дней
+check("generate: перенос по дням недели заполнил дни",
+      len(filled) > 0, True)
+check("generate: смены скопированы (все 8-15,48)",
+      all(g2.rows[0].raw_cells[d] == "8-15,48" for d in filled), True)
 
 print("\nИТОГО ПРОВАЛОВ: %d" % fails)
 sys.exit(1 if fails else 0)

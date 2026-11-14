@@ -269,3 +269,58 @@ td.name .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50
 .dot.red { background: #d14343; }
 .dot.yellow { background: #e5a50a; }
 .dot.green { background: #0e9f6e; }
+
+/* ---------- Источник данных (ручной ввод / сохранение / генерация) ---------- */
+.src-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+.src-block {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  background: #fbfcfe;
+}
+.src-block h3 { margin: 0 0 8px; font-size: 13px; font-weight: 650; color: var(--brand-dark); }
+.src-block .toolbar { margin: 0; }
+
+label.chk { gap: 6px; white-space: nowrap; }
+label.chk input[type="checkbox"] { width: 15px; height: 15px; }
+
+.sep { width: 1px; height: 22px; background: var(--line); display: inline-block; }
+
+.btn.danger { color: var(--error-ink); border-color: #f1c7c7; }
+.btn.danger:hover { background: var(--error-bg); }
+
+.add-employee input[type="text"] { width: 180px; }
+.add-employee select { width: 92px; }
+
+/* ---------- Редактируемые мета-ячейки (ФИО/должность/ставка/норма) ---------- */
+td.meta { cursor: pointer; }
+td.meta:hover { outline: 2px solid var(--brand); outline-offset: -2px; }
+td.meta .meta-text { display: inline-block; }
+td.meta.editing { padding: 2px; }
+td.meta.editing input, td.meta.editing select {
+  width: 100%;
+  padding: 4px 5px;
+  font-size: 13px;
+  text-align: left;
+  background: #fffbe6;
+  outline: 2px solid var(--brand);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+/* ---------- Кнопка удаления строки ---------- */
+td.del { padding: 4px; width: 30px; }
+.del-btn {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--muted);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px 7px;
+}
+.del-btn:hover { background: var(--error-bg); color: var(--error-ink); border-color: #f1c7c7; }
+
+/* ---------- Сообщение «ошибок нет» ---------- */
+.conflicts li.ok { background: var(--ok-bg); color: var(--ok-ink); border-color: #bfe8d6; }

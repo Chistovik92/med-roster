@@ -98,6 +98,20 @@ check("тип5 найден", any(x.code == HOURS_MISMATCH for x in c), True)
 res = res_for([mk_row(12, "Петров П.П.", "", week_norm=None)])
 check("неизвестная должность", any(x.code == UNKNOWN_POSITION for x in check_unknown_position(res)), True)
 
+# --- расчётная норма для ручных строк (без колонки «Прим.») ----------------- #
+# 39 ч × 0,5 ставки в ноябре 2026 = 155 * 0.5 = 77.5; факт 15.6 → отклонение
+res = res_for([mk_row(12, "Ручной", "вр.пед.уч.", week_norm=39, rate=0.5,
+                      days={5: "8-15,48", 6: "12,12-20"})])  # факт 15.6, norm_col=None
+c = check_hours_mismatch(res)
+check("ручная строка: отклонение от расчётной нормы найдено",
+      any(x.code == HOURS_MISMATCH for x in c), True)
+# точное совпадение с расчётной нормой не флагается
+res = res_for([mk_row(12, "Точный", "вр.пед.уч.", week_norm=39, rate=0.5,
+                      days={d: "8-15,48" for d in range(1, 31)})])
+# факт 30*7.8=234.0 сильно выше 77.5 — намеренно проверяем только что флагается
+c = check_hours_mismatch(res)
+check("ручная строка с перекосом флагается", len(c) >= 1, True)
+
 # --- полный прогон не падает и собирает все типы --------------------------- #
 big = res_for([
     mk_row(12, "Медведева К.Д.", "вр.пед.уч.", week_norm=39, norm_col=159.0),

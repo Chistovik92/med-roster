@@ -22,13 +22,19 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app import __version__
+from app.core import storage
 from app.core.calendar_rf import get_year_calendar
 from app.core.constants import VALID_WEEK_NORMS, DEFAULT_ORG
 from app.services.conflict_checker import check_all, Conflict
 from app.services.exporter import export_csv, export_t13_html, export_okud_html, export_signoff_html
-from app.services.scheduler import autofill, copy_schedule
+from app.services.norm_calculator import monthly_base_norm
+from app.services.position_classifier import classify
+from app.services.scheduler import autofill, copy_schedule, generate_month
 from app.services.time_parser import parse_cell
-from app.services.xls_importer import import_xls, ImportResult, EmployeeRow
+from app.services.xls_importer import (
+    import_xls, ImportResult, EmployeeRow,
+    create_manual_schedule, serialize_result, deserialize_result,
+)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -71,7 +77,8 @@ def _get_session(sid: str) -> Optional[Dict[str, Any]]:
 # --------------------------------------------------------------------------- #
 #  Сериализация в JSON
 # --------------------------------------------------------------------------- #
-def _row_to_dict(row: EmployeeRow, day_count: int) -> Dict[str, Any]:
+def _row_to_dict(row: EmployeeRow, result: ImportResult) -> Dict[str, Any]:
+    day_count = result.day_count
     days: Dict[str, Dict[str, Any]] = {}
     for d in range(1, day_count + 1):
         raw = row.raw_cells.get(d, "")
@@ -84,6 +91,11 @@ def _row_to_dict(row: EmployeeRow, day_count: int) -> Dict[str, Any]:
             days[str(d)] = {"raw": raw, "kind": "shift", "hours": pc.total_hours}
         else:
             days[str(d)] = {"raw": raw, "kind": "invalid", "error": pc.error, "hours": 0.0}
+    # Расчётная месячная норма по 588н (для ручных строк, где нет колонки «Прим.»).
+    computed_norm = None
+    if row.week_norm is not None:
+        computed_norm = round(
+            monthly_base_norm(row.week_norm, result.year, result.month, row.rate), 1)
     return {
         "index": row.index,
         "name": row.name,
@@ -96,6 +108,7 @@ def _row_to_dict(row: EmployeeRow, day_count: int) -> Dict[str, Any]:
         "sum_col": row.sum_col,
         "norm_col": row.norm_col,
         "extra_col": row.extra_col,
+        "computed_norm": computed_norm,
     }
 
 
@@ -116,10 +129,42 @@ def _result_to_dict(res: ImportResult, conflicts: List[Conflict]) -> Dict[str, A
         "year": res.year,
         "month": res.month,
         "day_count": res.day_count,
-        "employees": [_row_to_dict(r, res.day_count) for r in res.rows],
+        "manual": res.manual,
+        "employees": [_row_to_dict(r, res) for r in res.rows],
         "conflicts": [_conflict_to_dict(c) for c in conflicts],
         "warnings": res.warnings,
     }
+
+
+def _new_session(res: ImportResult) -> JSONResponse:
+    """Создать сессию для готового графика и вернуть его сериализацию."""
+    conflicts = check_all(res)
+    sid = uuid.uuid4().hex
+    _sessions[sid] = {"result": res, "conflicts": conflicts, "at": time.time()}
+    _gc_sessions()
+    payload = _result_to_dict(res, conflicts)
+    payload["session_id"] = sid
+    return JSONResponse(content=payload)
+
+
+def _refresh_session(sid: str) -> JSONResponse:
+    """Пересчитать валидацию текущей сессии и вернуть её сериализацию."""
+    session = _sessions.get(sid)
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
+    res: ImportResult = session["result"]
+    conflicts = check_all(res)
+    session["conflicts"] = conflicts
+    payload = _result_to_dict(res, conflicts)
+    payload["session_id"] = sid
+    return JSONResponse(content=payload)
+
+
+def _find_row(res: ImportResult, row_index: int) -> Optional[EmployeeRow]:
+    for r in res.rows:
+        if r.index == row_index:
+            return r
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -177,6 +222,168 @@ async def import_file(file: UploadFile = File(...),
         return JSONResponse(content=payload)
     except Exception as exc:  # noqa: BLE001 — отдаём понятную ошибку клиенту
         return JSONResponse(status_code=422, content={"error": str(exc)})
+
+
+# --------------------------------------------------------------------------- #
+#  Ручной ввод графика
+# --------------------------------------------------------------------------- #
+@app.post("/api/schedule")
+def create_schedule(year: int = Body(...), month: int = Body(...)) -> JSONResponse:
+    """Создать пустой график для ручного ввода (год + месяц)."""
+    try:
+        res = create_manual_schedule(year, month)
+    except ValueError as exc:
+        return JSONResponse(status_code=422, content={"error": str(exc)})
+    return _new_session(res)
+
+
+# --------------------------------------------------------------------------- #
+#  Сотрудники (CRUD)
+# --------------------------------------------------------------------------- #
+@app.post("/api/session/{sid}/employees")
+def add_employee(sid: str,
+                 name: str = Body(...),
+                 position: str = Body(""),
+                 rate: float = Body(1.0),
+                 week_norm: Optional[int] = Body(None)) -> JSONResponse:
+    """Добавить сотрудника в график (ручной ввод)."""
+    session = _get_session(sid)
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
+    res: ImportResult = session["result"]
+
+    name = (name or "").strip()
+    if not name:
+        return JSONResponse(status_code=422, content={"error": "укажите Ф.И.О."})
+    position = (position or "").strip()
+    if rate is None or rate <= 0 or rate > 2:
+        return JSONResponse(status_code=422, content={"error": "неверная ставка"})
+
+    # недельную норму определяем по должности, если не задана явно
+    if week_norm is None and position:
+        week_norm, _r = classify(position)
+
+    idx = max([r.index for r in res.rows], default=-1) + 1
+    res.rows.append(EmployeeRow(index=idx, name=name, position=position,
+                                rate=float(rate), week_norm=week_norm))
+    return _refresh_session(sid)
+
+
+@app.patch("/api/session/{sid}/employees/{index}")
+def update_employee(sid: str, index: int,
+                    name: Optional[str] = Body(None),
+                    position: Optional[str] = Body(None),
+                    rate: Optional[float] = Body(None),
+                    week_norm: Optional[int] = Body(None)) -> JSONResponse:
+    """Изменить сотрудника: ФИО, должность, ставку и/или недельную норму."""
+    session = _get_session(sid)
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
+    res: ImportResult = session["result"]
+    row = _find_row(res, index)
+    if row is None:
+        return JSONResponse(status_code=404, content={"error": "сотрудник не найден"})
+
+    if name is not None:
+        name = name.strip()
+        if not name:
+            return JSONResponse(status_code=422, content={"error": "Ф.И.О. не может быть пустым"})
+        row.name = name
+    if position is not None:
+        position = position.strip()
+        row.position = position
+        if week_norm is None:
+            # должность изменилась и норма не задана явно — переклассифицируем
+            row.week_norm, _r = classify(position)
+            row.norm_rule = None
+    if rate is not None:
+        if rate <= 0 or rate > 2:
+            return JSONResponse(status_code=422, content={"error": "неверная ставка"})
+        row.rate = float(rate)
+    if week_norm is not None:
+        row.week_norm = week_norm
+    return _refresh_session(sid)
+
+
+@app.delete("/api/session/{sid}/employees/{index}")
+def delete_employee(sid: str, index: int) -> JSONResponse:
+    """Удалить сотрудника из графика."""
+    session = _get_session(sid)
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
+    res: ImportResult = session["result"]
+    row = _find_row(res, index)
+    if row is None:
+        return JSONResponse(status_code=404, content={"error": "сотрудник не найден"})
+    res.rows.remove(row)
+    return _refresh_session(sid)
+
+
+# --------------------------------------------------------------------------- #
+#  Сохранение / загрузка / генерация следующих месяцев
+# --------------------------------------------------------------------------- #
+@app.post("/api/session/{sid}/save")
+def save_schedule(sid: str, org: str = Body("", embed=True)) -> JSONResponse:
+    """Сохранить текущий график в локальное хранилище."""
+    session = _get_session(sid)
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
+    res: ImportResult = session["result"]
+    try:
+        saved_id = storage.save_month(res.year, res.month, org or DEFAULT_ORG,
+                                      serialize_result(res))
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+    return JSONResponse(content={"id": saved_id, "year": res.year,
+                                 "month": res.month})
+
+
+@app.get("/api/saved")
+def saved_list() -> JSONResponse:
+    """Список сохранённых месяцев."""
+    try:
+        return JSONResponse(content={"saved": storage.list_saved()})
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+@app.post("/api/saved/{saved_id}/load")
+def load_saved(saved_id: int) -> JSONResponse:
+    """Загрузить сохранённый месяц в новую сессию."""
+    data = storage.get_saved(saved_id)
+    if data is None:
+        return JSONResponse(status_code=404, content={"error": "сохранение не найдено"})
+    try:
+        res = deserialize_result(data)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(status_code=422, content={"error": str(exc)})
+    return _new_session(res)
+
+
+@app.delete("/api/saved/{saved_id}")
+def delete_saved_route(saved_id: int) -> JSONResponse:
+    """Удалить сохранённый месяц."""
+    ok = storage.delete_saved(saved_id)
+    if not ok:
+        return JSONResponse(status_code=404, content={"error": "сохранение не найдено"})
+    return JSONResponse(content={"deleted": saved_id})
+
+
+@app.post("/api/session/{sid}/generate")
+def generate_route(sid: str,
+                   year: int = Body(...),
+                   month: int = Body(...),
+                   copy_shifts: bool = Body(False)) -> JSONResponse:
+    """Сгенерировать следующий месяц на основе текущего графика."""
+    session = _get_session(sid)
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
+    res: ImportResult = session["result"]
+    try:
+        new_res = generate_month(res, year, month, copy_shifts=copy_shifts)
+    except ValueError as exc:
+        return JSONResponse(status_code=422, content={"error": str(exc)})
+    return _new_session(new_res)
 
 
 @app.post("/api/session/{sid}/cell")

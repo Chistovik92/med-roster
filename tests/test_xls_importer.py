@@ -5,7 +5,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.services.xls_importer import (
     import_xls, detect_period, _to_float, _to_str, COL_SUM, COL_NORM,
+    create_manual_schedule, serialize_result, deserialize_result, EmployeeRow,
 )
+from app.services.time_parser import parse_cell
 
 fails = 0
 def check(name, actual, expected):
@@ -56,6 +58,35 @@ for fn, nrows, norm_dist in FILES:
 
 if missing:
     print("\n(пропущено файлов: %d — .xls не в git, только локально)" % missing)
+
+
+# --- ручной график: создание и сериализация --------------------------------- #
+res = create_manual_schedule(2026, 11)
+check("create_manual: manual=True", res.manual, True)
+check("create_manual: year", res.year, 2026)
+check("create_manual: month", res.month, 11)
+check("create_manual: day_count", res.day_count, 30)
+check("create_manual: пусто", res.rows, [])
+
+row = EmployeeRow(index=0, name="Смирнова О.А.", position="зубной врач",
+                  rate=0.5, week_norm=33)
+row.raw_cells[2] = "8-15,48"
+row.parsed[2] = parse_cell("8-15,48")
+row.total_hours = 7.8
+res.rows.append(row)
+
+data = serialize_result(res)
+check("serialize: employees", len(data["employees"]), 1)
+check("serialize: rate сохранён", data["employees"][0]["rate"], 0.5)
+check("serialize: week_norm сохранён", data["employees"][0]["week_norm"], 33)
+check("serialize: days сохранены", data["employees"][0]["days"], {"2": "8-15,48"})
+
+res2 = deserialize_result(data)
+check("deserialize: имя", res2.rows[0].name, "Смирнова О.А.")
+check("deserialize: ставка", res2.rows[0].rate, 0.5)
+check("deserialize: норма", res2.rows[0].week_norm, 33)
+check("deserialize: часы", round(res2.rows[0].total_hours, 1), 7.8)
+check("deserialize: manual", res2.manual, True)
 
 print("\nИТОГО ПРОВАЛОВ: %d" % fails)
 sys.exit(1 if fails else 0)

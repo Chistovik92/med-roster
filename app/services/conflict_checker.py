@@ -197,12 +197,24 @@ def check_hours_mismatch(result: ImportResult, sum_tol: float = 0.2,
                 message="фактическая сумма %.1f ч ≠ колонка 32 (%.1f ч)"
                         % (total, r.sum_col),
             ))
-        if r.norm_col is not None and abs(total - r.norm_col) > norm_tol:
-            out.append(Conflict(
-                code=HOURS_MISMATCH, severity="warning", employee=r.name,
-                message="отклонение от нормы: %.1f ч против %.1f ч (Δ = %+.1f ч)"
-                        % (total, r.norm_col, total - r.norm_col),
-            ))
+        if r.norm_col is not None:
+            # импортированная колонка «Прим.» — сверяем факт с ней
+            if abs(total - r.norm_col) > norm_tol:
+                out.append(Conflict(
+                    code=HOURS_MISMATCH, severity="warning", employee=r.name,
+                    message="отклонение от нормы: %.1f ч против %.1f ч (Δ = %+.1f ч)"
+                            % (total, r.norm_col, total - r.norm_col),
+                ))
+        elif r.week_norm is not None:
+            # ручной ввод (нет колонки «Прим.») — сверяем с расчётной нормой 588н
+            expected = monthly_base_norm(r.week_norm, result.year,
+                                         result.month, r.rate)
+            if abs(total - expected) > norm_tol:
+                out.append(Conflict(
+                    code=HOURS_MISMATCH, severity="warning", employee=r.name,
+                    message="отклонение от расчётной нормы: %.1f ч против %.1f ч "
+                            "(Δ = %+.1f ч)" % (total, expected, total - expected),
+                ))
     return out
 
 

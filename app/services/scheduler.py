@@ -8,11 +8,15 @@
 """
 from __future__ import annotations
 
+from collections import Counter
+from datetime import date
 from typing import List
 
 from app.core.calendar_rf import get_year_calendar
 from app.services.time_parser import parse_cell
-from app.services.xls_importer import ImportResult, EmployeeRow
+from app.services.xls_importer import (
+    ImportResult, EmployeeRow, create_manual_schedule,
+)
 
 
 def _find_row(result: ImportResult, row_index: int) -> EmployeeRow:
@@ -83,3 +87,36 @@ def copy_schedule(result: ImportResult, from_index: int, to_index: int) -> None:
         else:
             dst.parsed[day] = parse_cell(raw)
     dst.total_hours = sum(p.total_hours for p in dst.parsed.values())
+
+
+def generate_month(result: ImportResult, year: int, month: int,
+                   copy_shifts: bool = False) -> ImportResult:
+    """Сгенерировать график на следующий (или любой) месяц на основе текущего.
+
+    Переносит состав сотрудников (ФИО, должность, ставка, недельная норма) в
+    новый месяц. При ``copy_shifts=True`` дополнительно переносит смены по дням
+    недели: для каждого дня недели берётся самая частая смена из исходного
+    месяца и применяется ко всем дням с тем же днём недели в целевом месяце
+    (это сохраняет ритм «врач работает по понедельникам в смену 8–15,48»).
+    """
+    new = create_manual_schedule(year, month)
+    for i, src in enumerate(result.rows):
+        row = EmployeeRow(index=i, name=src.name, position=src.position,
+                          rate=src.rate, week_norm=src.week_norm)
+        if copy_shifts:
+            by_weekday = {}
+            for d in range(1, result.day_count + 1):
+                raw = src.raw_cells.get(d, "")
+                if raw == "":
+                    continue
+                wd = date(result.year, result.month, d).weekday()
+                by_weekday.setdefault(wd, []).append(raw)
+            for wd, vals in by_weekday.items():
+                chosen = Counter(vals).most_common(1)[0][0]
+                for d in range(1, new.day_count + 1):
+                    if date(year, month, d).weekday() == wd:
+                        row.raw_cells[d] = chosen
+                        row.parsed[d] = parse_cell(chosen)
+        row.total_hours = sum(p.total_hours for p in row.parsed.values())
+        new.rows.append(row)
+    return new

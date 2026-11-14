@@ -20,14 +20,14 @@
       </div>
     </div>
     <nav class="tabs" id="tabs">
-      <button class="tab active" data-tab="calendar">Производственный календарь</button>
-      <button class="tab" data-tab="import">Импорт графика (.xls)</button>
+      <button class="tab" data-tab="calendar">Производственный календарь</button>
+      <button class="tab active" data-tab="graph">График</button>
     </nav>
   </header>
 
   <main>
     <!-- ================= Календарь ================= -->
-    <section id="tab-calendar" class="panel active">
+    <section id="tab-calendar" class="panel">
       <div class="toolbar">
         <label>Год
           <input type="number" id="cal-year" value="2026" min="1990" max="2050">
@@ -64,25 +64,63 @@
       </div>
     </section>
 
-    <!-- ================= Импорт ================= -->
-    <section id="tab-import" class="panel">
+    <!-- ================= График ================= -->
+    <section id="tab-graph" class="panel active">
       <div class="card">
-        <h2>Загрузка графика</h2>
-        <p class="hint">Выберите файл «.xls» (формат «СГП №16»). Период определяется автоматически из шапки; при необходимости укажите год и месяц явно.</p>
-        <div class="toolbar">
-          <input type="file" id="import-file" accept=".xls">
-          <label>Год <input type="number" id="import-year" placeholder="авто"></label>
-          <label>Месяц <input type="number" id="import-month" min="1" max="12" placeholder="авто"></label>
-          <button id="import-run" class="btn primary">Импортировать</button>
+        <h2>Источник данных</h2>
+        <p class="hint">Загрузите файл «.xls», создайте пустой график вручную или продолжите с сохранённого месяца.</p>
+
+        <div class="src-grid">
+          <div class="src-block">
+            <h3>Импорт .xls</h3>
+            <div class="toolbar">
+              <input type="file" id="import-file" accept=".xls">
+              <label>Год <input type="number" id="import-year" placeholder="авто"></label>
+              <label>Месяц <input type="number" id="import-month" min="1" max="12" placeholder="авто"></label>
+              <button id="import-run" class="btn primary">Импортировать</button>
+            </div>
+          </div>
+
+          <div class="src-block">
+            <h3>Новый график вручную</h3>
+            <div class="toolbar">
+              <label>Год <input type="number" id="manual-year" value="2026" min="1990" max="2050"></label>
+              <label>Месяц <input type="number" id="manual-month" min="1" max="12" value="11"></label>
+              <button id="manual-create" class="btn primary">Создать</button>
+            </div>
+          </div>
+
+          <div class="src-block">
+            <h3>Сохранённые месяцы</h3>
+            <div class="toolbar">
+              <select id="saved-list"></select>
+              <button id="saved-load" class="btn">Загрузить</button>
+              <button id="saved-delete" class="btn danger">Удалить</button>
+            </div>
+          </div>
+
+          <div class="src-block">
+            <h3>Сгенерировать следующий месяц</h3>
+            <p class="hint" style="margin:0 0 8px">Из текущего графика: состав сотрудников (и, по желанию, смены по дням недели).</p>
+            <div class="toolbar">
+              <label>Год <input type="number" id="gen-year" min="1990" max="2050"></label>
+              <label>Месяц <input type="number" id="gen-month" min="1" max="12"></label>
+              <label class="chk"><input type="checkbox" id="gen-copy-shifts" checked> перенести смены по дням недели</label>
+              <button id="gen-run" class="btn primary">Сгенерировать</button>
+            </div>
+          </div>
         </div>
+
         <div id="import-status" class="status"></div>
       </div>
 
       <div id="import-results" class="hidden">
         <div class="card">
-          <h2>Сводка</h2>
+          <h2>Сводка <span id="period-label" class="badge"></span></h2>
           <div id="import-summary" class="summary"></div>
           <div class="toolbar" id="export-toolbar" style="margin-bottom:0">
+            <button id="save-month" class="btn primary">Сохранить месяц</button>
+            <span class="sep"></span>
             <button id="export-csv" class="btn">График (CSV)</button>
             <button id="export-t13" class="btn">Табель Т-13</button>
             <button id="export-okud" class="btn">Табель ОКУД 0504421</button>
@@ -97,7 +135,20 @@
 
         <div class="card">
           <h2>Сотрудники</h2>
-          <p class="hint">Кликните по ячейке, чтобы исправить значение (интервал «8-15,48» или код «В»). Enter — сохранить и вниз, Esc — отмена.</p>
+          <p class="hint">Кликните по ячейке (смена/код), а также по Ф.И.О., должности, ставке или норме, чтобы изменить. Enter — сохранить, Esc — отмена. Ставку и норму выбирайте из списка.</p>
+          <div class="toolbar add-employee">
+            <label>Ф.И.О. <input type="text" id="emp-name" placeholder="Иванова И.И." autocomplete="off"></label>
+            <label>Должность <input type="text" id="emp-position" placeholder="вр.пед.уч." autocomplete="off"></label>
+            <label>Ставка
+              <select id="emp-rate">
+                <option value="1">1,00</option>
+                <option value="0.75">0,75</option>
+                <option value="0.5">0,50</option>
+                <option value="0.25">0,25</option>
+              </select>
+            </label>
+            <button id="emp-add" class="btn primary">Добавить сотрудника</button>
+          </div>
           <div class="table-scroll" id="emp-table-wrap"></div>
         </div>
 
@@ -107,7 +158,7 @@
           <div class="toolbar">
             <label>Сотрудник <select id="tool-emp"></select></label>
             <label>Смена <input type="text" id="tool-shift" placeholder="8-15,48" style="width:96px"></label>
-            <label><input type="checkbox" id="tool-workdays" checked> только рабочие дни</label>
+            <label class="chk"><input type="checkbox" id="tool-workdays" checked> только рабочие дни</label>
             <button id="tool-autofill" class="btn primary">Заполнить</button>
           </div>
           <div class="toolbar" style="margin:0">
@@ -125,7 +176,7 @@
     </section>
   </main>
 
-  <footer class="footer">med-roster 0.3.0 · Python + FastAPI · работает на Windows 7 / 10 / 11 и Linux</footer>
+  <footer class="footer">med-roster 0.4.0 · Python + FastAPI · работает на Windows 7 / 10 / 11 и Linux</footer>
 
   <script src="/static/app.js"></script>
 </body>

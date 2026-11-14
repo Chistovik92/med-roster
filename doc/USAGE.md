@@ -10,8 +10,9 @@ calculate shift schedules and time sheets (OKUD 0504421 / T-13).
 ## 1. Requirements
 
 - Python **3.8+** (works on Windows 7 and Linux Debian 11–13 / Ubuntu).
-- No database, no Node.js, no Docker — the app is a single FastAPI process with
-  a vanilla-JS web page and SQLite-free in-memory sessions.
+- No Node.js, no Docker — the app is a single FastAPI process with a vanilla-JS
+  web page. Saved months live in a local SQLite database (Python's built-in
+  `sqlite3`, no extra dependencies).
 
 > **Installers:** to avoid installing Python manually, grab a ready installer from
 > the [GitHub release](https://github.com/Chistovik92/med-roster/releases): `.exe`
@@ -73,34 +74,76 @@ The panel has two tabs.
 - A badge **«требует сверки»** («needs verification») appears for years outside
   the exact 2020–2027 range (future decrees are not yet known).
 
-### 4.2. Import a schedule
+### 4.2. The «График» tab — data source
 
-1. Open the **«Импорт графика (.xls)»** tab.
-2. Choose a `.xls` file (the «СГП №16» layout). The period is detected
-   automatically from the header; you may also set the year/month explicitly.
-3. Click **«Импортировать»** («Import»).
+The «График» tab combines four ways to start:
 
-The app parses the file, classifies job titles, recalculates each employee's
-hours and runs the validator (5 error types). After import you see:
+1. **Import .xls** — choose a `.xls` file (the «СГП №16» layout) and click
+   **«Импортировать»** («Import»). The period is detected from the header
+   automatically (year/month may also be set explicitly).
+2. **New schedule manually** — set the year and month and click **«Создать»**
+   («Create»): you get an empty schedule to fill with employees and cells
+   (see section 5).
+3. **Saved months** — the list of previously saved schedules: «Загрузить»
+   («Load») opens one, «Удалить» («Delete») removes it from the list.
+4. **Generate the next month** — builds a schedule for the given month from the
+   current one: it carries over the employee roster, and (when the checkbox
+   «перенести смены по дням недели» is on) also the shifts themselves — for each
+   weekday the most frequent shift is taken.
 
-- **Summary** — employees, days in month, errors, warnings.
-- **Export buttons** — CSV, Т-13, ОКУД 0504421, schedule for signature.
-- **Errors and warnings** — the validator's findings.
-- **Employees** — an editable grid.
+The app parses/loads/generates, classifies job titles, recalculates hours and
+runs the validator (5 error types). After that you see:
+
+- **Summary** — period, employees, days in month, errors, warnings.
+- **Export and save buttons** — «Сохранить месяц» («Save month»), CSV, Т-13,
+  ОКУД 0504421, schedule for signature.
+- **Errors and warnings** — the validator's findings (including for manual data).
+- **Employees** — an editable grid (add/remove employees).
 - **Tools** — auto-fill and copy schedule.
+
+### 4.3. Institution name
+
+The header field **«Учреждение»** («Institution») is inserted into the printable
+forms (Т-13, ОКУД 0504421, schedule for signature) and remembered by the browser
+(`localStorage`). Default — «ГУЗ «СГП № 16»».
 
 ## 5. Editing the schedule
 
 - **Click** any day cell to edit it. Enter an interval like `8-15,48` or a
   status code (`В`, `ОТ`, `Б`, `У`).
-- **Enter** — save and move down; **Esc** — cancel.
-- Hours, totals and validation are recalculated after every change.
+- **Click** a name, job title, rate or week norm to change it. The rate
+  (1,00 / 0,75 / 0,50 / 0,25) and the week norm are picked from a list. When the
+  job title changes, the norm is re-classified automatically (and can be set
+  manually).
+- To add an employee, fill «Ф.И.О.», «Должность», «Ставка» and click
+  **«Добавить сотрудника»**. Remove a row with the «✕» button on the right.
+- **Enter** — save; **Esc** — cancel.
+- Hours, totals and validation are recalculated after every change. For
+  manually-entered rows the month norm is computed automatically (Order № 588n)
+  and compared with the actual hours.
 - The bottom **traffic light** summarizes the state:
   - 🟢 **green** — no errors, ready to export;
   - 🟡 **yellow** — warnings only, can export;
   - 🔴 **red** — errors remain, fix them and export again.
 
-## 6. Tools
+## 6. Saving and generating months
+
+### Saving a month
+Click **«Сохранить месяц»** («Save month») in the summary. The schedule is
+written to a local SQLite database:
+
+- Windows — `%APPDATA%\med-roster`;
+- Linux — `~/.local/share/med-roster`;
+- override — the `MEDROSTER_DATA_DIR` environment variable.
+
+### Generating the next months
+1. Open / create / load a schedule (e.g. for November).
+2. In the «Сгенерировать следующий месяц» block set the year and month and turn
+   the «перенести смены по дням недели» checkbox on or off.
+3. Click **«Сгенерировать»** («Generate») — a schedule for the new month appears
+   with the same employee roster. Check it and save.
+
+## 7. Tools
 
 ### Auto-fill
 Fill a person's empty cells with one shift:
@@ -115,7 +158,7 @@ Fill a person's empty cells with one shift:
 2. Click **«Скопировать график»** («Copy schedule»). The target's entire month
    is overwritten with the source's shifts.
 
-## 7. Export
+## 8. Export
 
 All forms open in a new browser tab / download as HTML or CSV:
 
@@ -128,14 +171,14 @@ All forms open in a new browser tab / download as HTML or CSV:
 
 > Print the HTML forms from the browser (Ctrl+P).
 
-## 8. Data and privacy
+## 9. Data and privacy
 
 - Personal data (152-FZ) stays **local only**. `.xls`/`.docx` source files are
   ignored by git (see `.gitignore`) and never leave your machine.
-- Sessions are **in-memory**: closing the server discards them. Re-import the
-  file to continue.
+- The current session is **in-memory**: closing the server discards it. To keep
+  working later, click **«Сохранить месяц»** and then load the saved month.
 
-## 9. Tests
+## 10. Tests
 
 Each module has a standalone test (no pytest):
 ```
@@ -146,4 +189,5 @@ python tests/test_xls_importer.py
 python tests/test_conflict_checker.py
 python tests/test_exporter.py
 python tests/test_scheduler.py
+python tests/test_storage.py
 ```
