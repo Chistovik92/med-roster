@@ -91,6 +91,6 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            artifacts/windows-installer/*.exe
+            artifacts/windows-installer/packaging/*.exe
             artifacts/windows-installer/*.zip
             artifacts/linux-packages/*
