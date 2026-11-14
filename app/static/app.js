@@ -155,17 +155,32 @@
     document.body.removeChild(a);
   }
 
+  // ---- название учреждения (подставляется в печатные формы) ----
+  var DEFAULT_ORG = "ГУЗ «СГП № 16»";
+  var ORG_KEY = "medroster.org";
+  var orgName = localStorage.getItem(ORG_KEY) || DEFAULT_ORG;
+  var orgInput = document.getElementById("org-name");
+  orgInput.value = orgName;
+  orgInput.addEventListener("change", function () {
+    orgName = orgInput.value.trim() || DEFAULT_ORG;
+    localStorage.setItem(ORG_KEY, orgName);
+  });
+
+  function exportUrl(path) {
+    return path + "?org=" + encodeURIComponent(orgName);
+  }
+
   document.getElementById("export-csv").addEventListener("click", function () {
     if (currentSessionId) download("/api/export/csv/" + currentSessionId);
   });
   document.getElementById("export-t13").addEventListener("click", function () {
-    if (currentSessionId) download("/api/export/t13/" + currentSessionId);
+    if (currentSessionId) download(exportUrl("/api/export/t13/" + currentSessionId));
   });
   document.getElementById("export-okud").addEventListener("click", function () {
-    if (currentSessionId) download("/api/export/okud/" + currentSessionId);
+    if (currentSessionId) download(exportUrl("/api/export/okud/" + currentSessionId));
   });
   document.getElementById("export-signoff").addEventListener("click", function () {
-    if (currentSessionId) download("/api/export/signoff/" + currentSessionId);
+    if (currentSessionId) download(exportUrl("/api/export/signoff/" + currentSessionId));
   });
 
   document.getElementById("import-run").addEventListener("click", function () {

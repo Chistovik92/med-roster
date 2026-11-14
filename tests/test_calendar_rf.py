@@ -128,3 +128,5 @@ log("ИТОГО ПРОВАЛОВ: %d" % fails)
 
 with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "calendar_result.txt"), "w", encoding="utf-8") as f:
     f.write("\n".join(out))
+
+sys.exit(1 if fails else 0)

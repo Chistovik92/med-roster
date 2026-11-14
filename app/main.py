@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app import __version__
 from app.core.calendar_rf import get_year_calendar
-from app.core.constants import VALID_WEEK_NORMS
+from app.core.constants import VALID_WEEK_NORMS, DEFAULT_ORG
 from app.services.conflict_checker import check_all, Conflict
 from app.services.exporter import export_csv, export_t13_html, export_okud_html, export_signoff_html
 from app.services.scheduler import autofill, copy_schedule
@@ -290,7 +290,7 @@ def export_t13_route(sid: str, org: Optional[str] = None,
     if session is None:
         return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
     res: ImportResult = session["result"]
-    html_text = export_t13_html(res, org=org or "ГУЗ «СГП № 16»",
+    html_text = export_t13_html(res, org=org or DEFAULT_ORG,
                                 dept=dept or "")
     filename = "tabel_T13_%d-%02d.html" % (res.year, res.month)
     return Response(
@@ -309,7 +309,7 @@ def export_okud_route(sid: str, org: Optional[str] = None,
     if session is None:
         return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
     res: ImportResult = session["result"]
-    html_text = export_okud_html(res, org=org or "ГУЗ «СГП № 16»",
+    html_text = export_okud_html(res, org=org or DEFAULT_ORG,
                                  dept=dept or "")
     filename = "tabel_OKUD0504421_%d-%02d.html" % (res.year, res.month)
     return Response(
@@ -328,7 +328,7 @@ def export_signoff_route(sid: str, org: Optional[str] = None,
     if session is None:
         return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
     res: ImportResult = session["result"]
-    html_text = export_signoff_html(res, org=org or "ГУЗ «СГП № 16»",
+    html_text = export_signoff_html(res, org=org or DEFAULT_ORG,
                                     dept=dept or "")
     filename = "graph_podpis_%d-%02d.html" % (res.year, res.month)
     return Response(

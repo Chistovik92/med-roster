@@ -54,6 +54,26 @@ body {
 h1 { font-size: 18px; margin: 0; font-weight: 650; }
 .sub { margin: 2px 0 0; color: var(--muted); font-size: 12.5px; }
 
+.org-field {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.org-field span { white-space: nowrap; }
+.org-field input {
+  min-width: 260px;
+  max-width: 420px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 6px 9px;
+  font-size: 13px;
+  background: #fff;
+  color: var(--ink);
+}
+
 .tabs { display: flex; gap: 6px; }
 .tab {
   border: 1px solid var(--line);

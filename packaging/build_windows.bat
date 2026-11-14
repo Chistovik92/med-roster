@@ -55,7 +55,7 @@ if errorlevel 1 (
     goto :done
 )
 cd packaging
-makensis /DVERSION=%VERSION% installer_windows.nsi
+makensis -INPUTCHARSET UTF8 /DVERSION=%VERSION% installer_windows.nsi
 cd ..
 
 :done

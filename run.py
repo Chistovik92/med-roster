@@ -29,6 +29,18 @@ def _error_log_path() -> str:
     return os.path.join(d, "med-roster-error.log")
 
 
+def _ensure_stdio() -> None:
+    """В GUI-сборке PyInstaller (``console=False``) потоки ``sys.stdout`` и
+    ``sys.stderr`` равны ``None``. Uvicorn при настройке логгера вызывает
+    ``sys.stdout.isatty()`` и падает с ``AttributeError`` — поэтому перед
+    запуском перенаправляем отсутствующие потоки в ``os.devnull``.
+    """
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
+
 def _show_error(message: str) -> None:
     """Показать ошибку пользователю (для GUI-сборки без консоли — MessageBox)."""
     try:
@@ -53,6 +65,7 @@ def _open_browser() -> None:
 
 
 def main() -> None:
+    _ensure_stdio()
     threading.Thread(target=_open_browser, daemon=True).start()
     # log_level="warning" — меньше шума; на слабом железе меньше накладных расходов.
     uvicorn.run(app, host=HOST, port=PORT, log_level="warning")

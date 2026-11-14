@@ -1,14 +1,14 @@
-; NSIS-установщик «МедГрафик: Поликлиника» (Windows 7/10/11).
+﻿; NSIS-установщик «МедГрафик: Поликлиника» (Windows 7/10/11).
 ;
 ; Упаковывает собранную PyInstaller-ом папку ``dist/MedGrafik`` в один
 ; установщик. Устанавливается в профиль пользователя (без прав администратора),
 ; что надёжно работает и на старых ПК без прав администратора.
 ;
-; Сборка:  makensis /DVERSION=0.2.0 installer_windows.nsi
+; Сборка:  makensis -INPUTCHARSET UTF8 /DVERSION=0.3.0 installer_windows.nsi
 ; (перед этим нужно собрать PyInstaller: см. build_windows.bat)
 
 !ifndef VERSION
-  !define VERSION "0.2.0"
+  !define VERSION "0.3.0"
 !endif
 
 !define APP_NAME "МедГрафик: Поликлиника"

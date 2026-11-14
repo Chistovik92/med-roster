@@ -41,7 +41,7 @@ jobs:
 
       - name: Build NSIS installer
         working-directory: packaging
-        run: makensis /DVERSION=${{ steps.ver.outputs.version }} installer_windows.nsi
+        run: makensis -INPUTCHARSET UTF8 /DVERSION=${{ steps.ver.outputs.version }} installer_windows.nsi
 
       - name: Package portable zip
         shell: pwsh
@@ -68,6 +68,9 @@ jobs:
           sudo gem install fpm --no-document
 
       - name: Build packages
+        env:
+          LANG: C.UTF-8
+          LC_ALL: C.UTF-8
         run: bash packaging/build_linux.sh
 
       - uses: actions/upload-artifact@v4

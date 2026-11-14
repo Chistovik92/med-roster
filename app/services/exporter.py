@@ -12,8 +12,9 @@ from __future__ import annotations
 import csv
 import io
 import html as _html
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
+from app.core.constants import DEFAULT_ORG
 from app.services.xls_importer import ImportResult, EmployeeRow
 
 # Канонический тип неявки -> код в табеле.
@@ -86,7 +87,7 @@ def export_csv(result: ImportResult) -> str:
 # --------------------------------------------------------------------------- #
 #  Табель Т-13 / ОКУД 0504421 (печатный HTML)
 # --------------------------------------------------------------------------- #
-def export_t13_html(result: ImportResult, org: str = "ГУЗ «СГП № 16»",
+def export_t13_html(result: ImportResult, org: str = DEFAULT_ORG,
                     dept: str = "") -> str:
     """Сформировать табель учёта рабочего времени (форма Т-13) как HTML."""
     first = result.month
@@ -155,7 +156,7 @@ h1{font-size:16px;text-align:center;margin:0 0 2px;}
 # --------------------------------------------------------------------------- #
 #  ОКУД 0504421 — табель учёта использования рабочего времени (бюджетные учр.)
 # --------------------------------------------------------------------------- #
-def export_okud_html(result: ImportResult, org: str = "ГУЗ «СГП № 16»",
+def export_okud_html(result: ImportResult, org: str = DEFAULT_ORG,
                      dept: str = "") -> str:
     """Табель по форме ОКУД 0504421 (печатный HTML, бюджетный учёт).
 
@@ -241,14 +242,16 @@ h1{font-size:15px;text-align:center;margin:0 0 4px;}
 # --------------------------------------------------------------------------- #
 #  График на подпись (печатная форма с УТВЕРЖДАЮ / СОГЛАСОВАНО)
 # --------------------------------------------------------------------------- #
-def export_signoff_html(result: ImportResult, org: str = "ГУЗ «СГП № 16»",
-                        head: str = "Главный врач ГУЗ «СГП № 16» Н.А. Глухова",
-                        dept: str = "") -> str:
+def export_signoff_html(result: ImportResult, org: str = DEFAULT_ORG,
+                        head: Optional[str] = None, dept: str = "") -> str:
     """График работы для утверждения и подписи (печатный HTML).
 
     Содержит блоки «УТВЕРЖДАЮ» и «СОГЛАСОВАНО», таблицу смен по дням и колонку
-    для подписи сотрудника.
+    для подписи сотрудника. Строка «УТВЕРЖДАЮ» по умолчанию выводит
+    «Главный врач <учреждение>» (название берётся из ``org``).
     """
+    if head is None:
+        head = "Главный врач %s" % org
     month_name = _RU_MONTHS_GEN[result.month - 1]
 
     day_head = "".join("<th>%d</th>" % d for d in range(1, result.day_count + 1))
