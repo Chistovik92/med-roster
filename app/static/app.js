@@ -361,15 +361,31 @@
       setStatus("Сначала создайте или откройте график", "error");
       return;
     }
-    jsonFetch("/api/session/" + currentSessionId + "/save", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ org: orgName, dept: deptName })
-    }).then(function (res) {
-      if (!res.ok) { setStatus("Ошибка: " + (res.data.error || "неизвестно"), "error"); return; }
-      setStatus("Месяц " + MONTHS[res.data.month - 1] + " " + res.data.year + " сохранён", "ok");
-      refreshSaved();
-    }).catch(function (e) { setStatus("Ошибка сети: " + e, "error"); });
+    var savedId = currentData && currentData.savedId;
+    if (savedId) {
+      // обновляем существующее сохранение
+      jsonFetch("/api/saved/" + savedId, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ org: orgName, dept: deptName, sid: currentSessionId })
+      }).then(function (res) {
+        if (!res.ok) { setStatus("Ошибка: " + (res.data.error || "неизвестно"), "error"); return; }
+        setStatus("Месяц " + MONTHS[res.data.month - 1] + " " + res.data.year + " обновлён", "ok");
+        refreshSaved();
+      }).catch(function (e) { setStatus("Ошибка сети: " + e, "error"); });
+    } else {
+      // создаём новое сохранение
+      jsonFetch("/api/session/" + currentSessionId + "/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ org: orgName, dept: deptName })
+      }).then(function (res) {
+        if (!res.ok) { setStatus("Ошибка: " + (res.data.error || "неизвестно"), "error"); return; }
+        setStatus("Месяц " + MONTHS[res.data.month - 1] + " " + res.data.year + " сохранён", "ok");
+        if (currentData) currentData.savedId = res.data.id;
+        refreshSaved();
+      }).catch(function (e) { setStatus("Ошибка сети: " + e, "error"); });
+    }
   }
 
   document.getElementById("saved-load").addEventListener("click", function () {
@@ -379,6 +395,7 @@
       .then(function (res) {
         if (!res.ok) { setStatus("Ошибка: " + (res.data.error || "неизвестно"), "error"); return; }
         currentSessionId = res.data.session_id;
+        res.data.savedId = id;
         setStatus("Загружен сохранённый месяц", "ok");
         fullRefresh(res.data);
       })
@@ -876,8 +893,8 @@
   function positionCellEditor(td) {
     var box = document.getElementById("cell-editor");
     var rect = td.getBoundingClientRect();
-    var w = box.offsetWidth || 260;
-    var h = box.offsetHeight || 120;
+    var w = 400;
+    var h = 180;
     var left = rect.left + rect.width / 2 - w / 2;
     var top = rect.bottom + 6;
     var vw = window.innerWidth || document.documentElement.clientWidth;

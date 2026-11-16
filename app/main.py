@@ -456,12 +456,31 @@ def rename_saved_route(saved_id: int, title: str = Body(..., embed=True)) -> JSO
     return JSONResponse(content={"id": saved_id, "title": (title or "").strip()})
 
 
+@app.patch("/api/saved/{saved_id}")
+def update_saved_route(saved_id: int, org: str = Body(""), dept: str = Body(""),
+                       sid: str = Body(...)) -> JSONResponse:
+    """Обновить данные сохранённого месяца из текущей сессии."""
+    session = _get_session(sid)
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
+    res: ImportResult = session["result"]
+    res.department = (dept or "").strip()
+    payload = serialize_result(res)
+    ok = storage.update_saved(saved_id, org or DEFAULT_ORG, (dept or "").strip(), payload)
+    if not ok:
+        return JSONResponse(status_code=404, content={"error": "сохранение не найдено"})
+    return JSONResponse(content={"id": saved_id, "year": res.year, "month": res.month})
+
+
 @app.get("/api/saved/export")
 def export_database_route() -> FileResponse:
     """Скачать полную базу сохранённых месяцев (копия в указанное место)."""
+    import time
     path = storage.export_database()
-    return FileResponse(path, media_type="application/octet-stream",
-                        filename="med-roster.db")
+    timestamp = time.strftime("%Y-%m-%d")
+    filename = f"med-roster-{timestamp}.db"
+    return FileResponse(path, media_type="application/x-sqlite3",
+                        headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 @app.post("/api/saved/import")

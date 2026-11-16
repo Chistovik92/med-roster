@@ -534,26 +534,27 @@ input[type="number"], input[type="file"], input[type="text"], select { padding: 
 .cell-editor {
   position: fixed;
   z-index: 90;
-  min-width: 220px;
-  max-width: 320px;
-  padding: 10px 12px;
+  width: 400px;
+  min-height: 180px;
+  padding: 14px 16px;
   border: 2px solid var(--brand);
   border-radius: 10px;
   background: #fff;
   box-shadow: 0 8px 28px rgba(16, 24, 40, .35);
 }
 .cell-editor-info {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted);
-  margin-bottom: 6px;
+  margin-bottom: 8px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .cell-editor input {
   width: 100%;
-  font-size: 22px;
-  padding: 8px 10px;
+  font-size: 24px;
+  font-weight: 600;
+  padding: 14px 12px;
   text-align: center;
   border: 1px solid var(--line);
   border-radius: 7px;

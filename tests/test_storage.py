@@ -61,6 +61,16 @@ check("restored: подразделение", restored.department, "УПО")
 check("rename_saved: True", storage.rename_saved(saved_id, "Ноябрьский график"), True)
 check("list_saved: title", storage.list_saved()[0]["title"], "Ноябрьский график")
 
+# обновление существующего месяца (изменение данных)
+res.rows[0].raw_cells[3] = "9-17"
+res.rows[0].parsed[3] = parse_cell("9-17")
+res.rows[0].total_hours = 15.8
+payload_updated = serialize_result(res)
+check("update_saved: True", storage.update_saved(saved_id, "ГУЗ «СГП № 16»", "УПО", payload_updated), True)
+restored_updated = deserialize_result(storage.get_saved(saved_id))
+check("updated: часы обновились", round(restored_updated.rows[0].total_hours, 1), 15.8)
+check("updated: запись одна (не создан дубль)", len(storage.list_saved()), 1)
+
 # экспорт/импорт базы (копируем в отдельный файл — это «сторонняя» база)
 import shutil
 export_path = storage.export_database()

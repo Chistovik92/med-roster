@@ -144,10 +144,9 @@ select it in the «Источник данных» card above.
   the norm, aligns hour totals, removes exact duplicates and shortens detected
   pre-holiday shifts by one hour. Overlapping rates and unknown job titles remain
   manual; review the schedule after correction.
-- **Click** a day cell to edit it. A **large floating field** opens next to the
-  cell — the value is fully visible while the month table stays on screen. Enter
-  an interval like `8-15,48` or a status code (`В`, `ОТ`, `Б`, `У`). Enter saves
-  and moves down, Tab moves right, Esc cancels.
+- **Click** a day cell to edit it. A **large floating field** (400×180px, 24px
+  bold font) opens next to the cell — the value is fully visible while the month
+  table stays on screen. Enter saves and moves down, Tab moves right, Esc cancels.
 - **Hotkeys.** When a cell is selected but its input field is not open: **1** —
   morning shift, **2** — evening shift (duration depends on the employee's week
   norm), **В** — day off, **О** — vacation, **Б** — sick leave, **У** — study.

@@ -103,6 +103,16 @@ def rename_saved(saved_id: int, title: str) -> bool:
         return cur.rowcount > 0
 
 
+def update_saved(saved_id: int, org: str, dept: str, payload: Dict) -> bool:
+    """Обновить данные сохранённого месяца; True, если запись существовала."""
+    init_db()
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE saved_months SET org=?, data=?, saved_at=? WHERE id=?",
+            (org or "", json.dumps(payload, ensure_ascii=False), time.time(), int(saved_id)))
+        return cur.rowcount > 0
+
+
 def list_saved() -> List[Dict]:
     """Список сохранённых месяцев (сводки, без полных данных)."""
     init_db()
