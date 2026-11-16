@@ -59,6 +59,8 @@ saved months are preserved.
 - **Automatic correction** of norms, hour totals, exact duplicates and shortened
   pre-holiday shifts; ambiguous overlapping rates remain manual.
 - **Department field** in the UI, saved months, XLS and printable forms.
+- **Update centre**: GitHub release and Python dependency checks, in-app updates
+  for portable/installed Windows and Linux with automatic restart.
 - **Export**: corrected schedule (XLS and CSV) and printable forms — T-13, OKUD 0504421,
   schedule for approval/signature.
 
@@ -66,7 +68,7 @@ saved months are preserved.
 
 - Python **3.8+** (works on Windows 7 and Linux Debian 11–13 / Ubuntu).
 - Dependencies from `requirements.txt` (`fastapi`, `uvicorn`, `pydantic`,
-  `python-multipart`, `xlrd`, `xlwt`).
+  `python-multipart`, `xlrd`, `xlwt`, `packaging`).
 
 ## Quick start
 
@@ -141,6 +143,7 @@ python tests/test_launcher.py
 python tests/test_ui.py
 python tests/test_autocorrect.py
 python tests/test_xls_export.py
+python tests/test_updater.py
 ```
 
 > `.xls` files containing personal data of employees are **not** committed to the

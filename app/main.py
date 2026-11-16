@@ -33,6 +33,7 @@ from app.services.norm_calculator import monthly_base_norm
 from app.services.position_classifier import classify
 from app.services.scheduler import autofill, copy_schedule, generate_month
 from app.services.time_parser import parse_cell
+from app.services import updater
 from app.services.xls_importer import (
     import_xls, ImportResult, EmployeeRow,
     create_manual_schedule, serialize_result, deserialize_result,
@@ -583,6 +584,37 @@ def copy_route(sid: str,
     payload = _result_to_dict(res, conflicts)
     payload["session_id"] = sid
     return JSONResponse(content=payload)
+
+
+# --------------------------------------------------------------------------- #
+#  Обновления приложения и необходимых компонентов
+# --------------------------------------------------------------------------- #
+@app.get("/api/maintenance")
+def maintenance() -> JSONResponse:
+    try:
+        return JSONResponse(content=updater.maintenance_status())
+    except Exception as exc:  # сеть не должна ломать основной интерфейс
+        return JSONResponse(status_code=503, content={"error": str(exc)})
+
+
+@app.post("/api/maintenance/dependencies")
+def maintenance_dependencies() -> JSONResponse:
+    try:
+        result = updater.update_dependencies()
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+    return JSONResponse(status_code=200 if result.get("ok") else 500, content=result)
+
+
+@app.post("/api/maintenance/app")
+def maintenance_app_update() -> JSONResponse:
+    try:
+        result = updater.install_app_update()
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+    if result.get("ok"):
+        _schedule_shutdown()
+    return JSONResponse(status_code=200 if result.get("ok") else 400, content=result)
 
 
 @app.get("/api/export/xls/{sid}")

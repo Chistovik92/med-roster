@@ -267,6 +267,18 @@ M_инд = M_баз − (W_нед / 5 × N_неявок × rate)
     сохранение месяца, сериализация и список сохранённых.
   - Новые тесты `test_autocorrect.py`, `test_xls_export.py`; всего 14 тестов,
     HTTP e2e (autocorrect + XLS + dept), `node --check` и `git diff --check`.
+- **Релиз 0.6.1 (центр обновлений):**
+  - `app/services/updater.py`: GitHub latest release + PyPI (совместимые версии
+    через `packaging`), статусы приложения/зависимостей.
+  - UI «Обновления» в шапке: проверка, установка новой версии, обновление
+    компонентов. Portable обновляет компоненты вместе с программой.
+  - Windows frozen: скачивание `MedGrafik-portable-<ver>-win32.zip`, безопасная
+    распаковка, обязательные `MedGrafik.exe`/`_socket.pyd`/UCRT/static, внешний
+    PowerShell ждёт PID, заменяет файлы и перезапускает.
+  - Linux: внешний bash ждёт завершения PID, запускает `install.sh`, перезапуск.
+  - Source: обновление зависимостей только через `requirements.txt`.
+  - API: `GET /api/maintenance`, `POST /api/maintenance/app`,
+    `POST /api/maintenance/dependencies`. Тест `test_updater.py` без сети.
 
 ## 11. Ближайшие действия
 
@@ -290,4 +302,6 @@ M_инд = M_баз − (W_нед / 5 × N_неявок × rate)
     установка Linux одной командой + релиз 0.5.5~~ — ГОТОВО.
 15. ~~Автокоррекция, экспорт `.xls`, подразделение, включение UCRT для
     Windows 7 + релиз 0.6.0~~ — ГОТОВО.
-16. **Дальнейшее (опционально):** кастомная `.ico` для Windows-установщика.
+16. ~~Центр обновлений (программа, Windows portable, Linux, компоненты) +
+    релиз 0.6.1~~ — ГОТОВО.
+17. **Дальнейшее (опционально):** кастомная `.ico` для Windows-установщика.

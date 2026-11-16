@@ -1125,6 +1125,100 @@
     postTool("/copy", { from_index: fromIndex, to_index: toIndex }, [toIndex]);
   });
 
+  // ---- центр обновлений приложения и компонентов ----
+  var updatesLoaded = false;
+  function updatesStatus(message, cls) {
+    var box = document.getElementById("updates-status");
+    box.textContent = message || "";
+    box.className = "status" + (cls ? " " + cls : "");
+  }
+  function renderUpdates(data) {
+    var app = data.app;
+    var appBox = document.getElementById("updates-app");
+    appBox.innerHTML = "";
+    var row = el("div", "update-row");
+    row.appendChild(el("span", "", "МедГрафик · Python " + data.python));
+    row.appendChild(el("strong", app.available ? "available" : "",
+      app.current + " → " + app.latest + (app.available ? " · доступно обновление" : "")));
+    appBox.appendChild(row);
+    if (app.error) appBox.appendChild(el("div", "update-error", "Проверка GitHub: " + app.error));
+
+    var install = document.getElementById("updates-install");
+    install.classList.toggle("hidden", !(data.can_self_update && app.available));
+    install.disabled = false;
+    install.textContent = "Установить обновление";
+    var depsButton = document.getElementById("updates-deps");
+    depsButton.classList.toggle("hidden", !data.can_update_dependencies);
+
+    var list = document.getElementById("updates-deps-list");
+    list.innerHTML = "";
+    list.appendChild(el("div", "hint", data.frozen ?
+      "Portable: компоненты входят в программу и обновляются вместе с ней." :
+      "Компоненты Python (проверяются версии, совместимые с текущим Python):"));
+    data.dependencies.forEach(function (dep) {
+      var line = el("div", "update-row");
+      line.appendChild(el("span", "", dep.name));
+      line.appendChild(el("span", dep.available ? "available" : "",
+        dep.current + (dep.latest ? " → " + dep.latest : "") +
+        (dep.available ? " · обновить" : "") + (dep.error ? " · " + dep.error : "")));
+      list.appendChild(line);
+    });
+  }
+  function checkUpdates() {
+    updatesStatus("Проверка GitHub и компонентов…");
+    jsonFetch("/api/maintenance").then(function (res) {
+      if (!res.ok) { updatesStatus("Ошибка проверки: " + (res.data.error || "неизвестно"), "error"); return; }
+      updatesLoaded = true;
+      renderUpdates(res.data);
+      updatesStatus(res.data.app.available ? "Доступна новая версия." : "Проверка завершена.",
+        res.data.app.available ? "" : "ok");
+    }).catch(function (e) { updatesStatus("Ошибка сети: " + e, "error"); });
+  }
+  document.getElementById("updates-open").addEventListener("click", function () {
+    document.getElementById("updates-modal").classList.remove("hidden");
+    if (!updatesLoaded) checkUpdates();
+  });
+  document.getElementById("updates-close").addEventListener("click", function () {
+    document.getElementById("updates-modal").classList.add("hidden");
+  });
+  document.getElementById("updates-check").addEventListener("click", checkUpdates);
+  document.getElementById("updates-install").addEventListener("click", function () {
+    var button = this;
+    button.disabled = true;
+    button.textContent = "Скачивание и установка…";
+    updatesStatus("Загружается официальный portable-пакет. Не закрывайте окно.");
+    jsonFetch("/api/maintenance/app", { method: "POST" }).then(function (res) {
+      if (!res.ok) {
+        updatesStatus("Ошибка установки: " + (res.data.error || "неизвестно"), "error");
+        button.disabled = false;
+        button.textContent = "Повторить установку";
+        return;
+      }
+      updatesStatus(res.data.message || "Обновление установлено", "ok");
+    }).catch(function (e) {
+      updatesStatus("Ошибка установки: " + e, "error");
+      button.disabled = false;
+    });
+  });
+  document.getElementById("updates-deps").addEventListener("click", function () {
+    var button = this;
+    button.disabled = true;
+    updatesStatus("Установка/обновление совместимых компонентов…");
+    jsonFetch("/api/maintenance/dependencies", { method: "POST" }).then(function (res) {
+      if (!res.ok) {
+        updatesStatus("Ошибка компонентов: " + (res.data.error || "неизвестно") +
+          (res.data.output ? "\n" + res.data.output : ""), "error");
+      } else {
+        updatesStatus("Компоненты обновлены. Перезапустите программу.", "ok");
+      }
+      button.disabled = false;
+      updatesLoaded = false;
+    }).catch(function (e) {
+      updatesStatus("Ошибка компонентов: " + e, "error");
+      button.disabled = false;
+    });
+  });
+
   // ---- выключение сервиса ----
   var shutdownBtn = document.getElementById("shutdown-btn");
   if (shutdownBtn) {

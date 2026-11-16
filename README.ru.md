@@ -58,6 +58,8 @@ curl -fsSL https://raw.githubusercontent.com/Chistovik92/med-roster/master/insta
 - **Автоматическое исправление** норм, итоговых сумм, точных дубликатов и
   предпраздничных смен; спорные накладки ставок остаются на ручную проверку.
 - **Подразделение** в UI, сохранённых месяцах, `.xls` и печатных формах.
+- **Центр обновлений**: проверка GitHub-релиза и Python-компонентов, обновление
+  Windows portable/установленной и Linux-версии с перезапуском.
 - **Экспорт**: исправленный график (XLS и CSV) и печатные формы — Т-13,
   ОКУД 0504421, график на подпись.
 
@@ -65,7 +67,7 @@ curl -fsSL https://raw.githubusercontent.com/Chistovik92/med-roster/master/insta
 
 - Python **3.8+** (работает на Windows 7 и Linux Debian 11–13 / Ubuntu).
 - Зависимости из `requirements.txt` (`fastapi`, `uvicorn`, `pydantic`,
-  `python-multipart`, `xlrd`, `xlwt`).
+  `python-multipart`, `xlrd`, `xlwt`, `packaging`).
 
 ## Запуск
 
@@ -140,6 +142,7 @@ python tests/test_launcher.py
 python tests/test_ui.py
 python tests/test_autocorrect.py
 python tests/test_xls_export.py
+python tests/test_updater.py
 ```
 
 > Файлы `.xls` с персональными данными сотрудников в репозиторий **не** входят

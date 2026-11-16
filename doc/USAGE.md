@@ -240,9 +240,24 @@ python tests/test_launcher.py
 python tests/test_ui.py
 python tests/test_autocorrect.py
 python tests/test_xls_export.py
+python tests/test_updater.py
 ```
 
-## 11. Stopping the service
+## 11. Updates and required components
+
+Click **«Обновления»** («Updates») in the top-right area, then **«Проверить
+обновления»** («Check for updates»). The app shows its current/latest GitHub
+version and the state of required components. Internet access is required.
+
+- **Windows portable / installed:** when a release is available, click
+  «Установить обновление». The official ZIP is downloaded and checked for the
+  executable, `_socket.pyd`, UCRT and UI files. The service stops, files are
+  replaced and the app restarts. Python and UCRT do not need separate installs.
+- **Linux:** the update runs the standard `install.sh` and restarts the app.
+- **Source launch:** «Обновить компоненты» installs compatible packages through
+  pip and `requirements.txt`. Restart the application afterwards.
+
+## 12. Stopping the service
 
 The app runs as a background web server on port 25625. To stop it cleanly (for
 example, before launching a new version):

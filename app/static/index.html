@@ -28,6 +28,7 @@
         <button class="tab" data-tab="calendar">Производственный календарь</button>
         <button class="tab active" data-tab="graph">График</button>
       </nav>
+      <button id="updates-open" class="btn" title="Проверить программу и необходимые компоненты">Обновления</button>
       <button id="shutdown-btn" class="btn danger" title="Остановить сервис (завершить программу)">Выключить сервис</button>
     </div>
   </header>
@@ -215,7 +216,26 @@
     </section>
   </main>
 
-  <footer class="footer">med-roster 0.6.0 · Python + FastAPI · работает на Windows 7 / 10 / 11 и Linux</footer>
+  <div id="updates-modal" class="modal hidden" role="dialog" aria-modal="true"
+       aria-labelledby="updates-title">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2 id="updates-title">Обновления</h2>
+        <button id="updates-close" class="btn" type="button">Закрыть</button>
+      </div>
+      <p class="hint">Проверяется последний релиз программы и версии необходимых компонентов.</p>
+      <div class="toolbar">
+        <button id="updates-check" class="btn primary" type="button">Проверить обновления</button>
+        <button id="updates-install" class="btn hidden" type="button">Установить обновление</button>
+        <button id="updates-deps" class="btn hidden" type="button">Обновить компоненты</button>
+      </div>
+      <div id="updates-status" class="status" role="status"></div>
+      <div id="updates-app" class="updates-block"></div>
+      <div id="updates-deps-list" class="updates-block"></div>
+    </div>
+  </div>
+
+  <footer class="footer">med-roster 0.6.1 · Python + FastAPI · работает на Windows 7 / 10 / 11 и Linux</footer>
 
   <script src="/static/app.js"></script>
 </body>

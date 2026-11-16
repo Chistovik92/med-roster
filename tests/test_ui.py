@@ -21,6 +21,10 @@ def main():
     assert 'id="autocorrect-run"' in html
     assert 'id="export-xls"' in html
     assert 'id="dept-name"' in html
+    assert 'id="updates-open"' in html
+    assert 'id="updates-modal"' in html
+    assert 'id="updates-install"' in html
+    assert 'id="updates-deps"' in html
     assert '<details class="card collapsible setup-card">' in html
     assert "table-layout: fixed" in css
     assert "max-height: calc(100vh" in css
@@ -29,6 +33,8 @@ def main():
     assert "function cellProblems" in js
     assert "function focusConflict" in js
     assert "data.day_count * 24" in js
+    assert "function checkUpdates" in js
+    assert '"/api/maintenance/app"' in js
     print("OK  компактная таблица, контекст ошибок и переходы к ячейкам присутствуют")
 
 
