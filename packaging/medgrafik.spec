@@ -20,6 +20,24 @@ for _pkg in ("uvicorn", "pydantic", "fastapi", "starlette"):
     except Exception:
         pass
 
+# Windows 7 не содержит Universal CRT в базовой установке. PyInstaller кладёт
+# VCRUNTIME140.dll, но не UCRT; без него _socket.pyd падает ещё в runtime-hook.
+binaries = []
+if os.name == "nt":
+    _ucrt_candidates = [
+        os.path.join(os.environ.get("PROGRAMFILES(X86)", ""),
+                     "Windows Kits", "10", "Redist", "ucrt", "DLLs", "x86"),
+        os.path.join(os.environ.get("PROGRAMFILES", ""),
+                     "Windows Kits", "10", "Redist", "ucrt", "DLLs", "x86"),
+    ]
+    _ucrt_dir = next((p for p in _ucrt_candidates
+                      if p and os.path.isfile(os.path.join(p, "ucrtbase.dll"))), None)
+    if _ucrt_dir is None:
+        raise RuntimeError(
+            "Не найден Windows SDK UCRT x86. Установите Windows 10 SDK: "
+            "без ucrtbase.dll сборка не будет запускаться на Windows 7.")
+    binaries += [(os.path.join(_ucrt_dir, "*.dll"), ".")]
+
 datas = []
 # Статические файлы фронтенда (index.html, app.js, style.css).
 datas += [(os.path.join(ROOT, "app", "static"), "app/static")]
@@ -32,7 +50,7 @@ for _pkg in ("fastapi", "starlette", "uvicorn"):
 a = Analysis(
     [os.path.join(ROOT, "run.py")],
     pathex=[ROOT],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],

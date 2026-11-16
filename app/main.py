@@ -26,8 +26,9 @@ from app import __version__
 from app.core import storage
 from app.core.calendar_rf import get_year_calendar, WEEKDAY_RU
 from app.core.constants import VALID_WEEK_NORMS, DEFAULT_ORG
+from app.services.autocorrect import autocorrect
 from app.services.conflict_checker import check_all, Conflict
-from app.services.exporter import export_csv, export_t13_html, export_okud_html, export_signoff_html
+from app.services.exporter import export_csv, export_xls, export_t13_html, export_okud_html, export_signoff_html
 from app.services.norm_calculator import monthly_base_norm
 from app.services.position_classifier import classify
 from app.services.scheduler import autofill, copy_schedule, generate_month
@@ -149,6 +150,7 @@ def _result_to_dict(res: ImportResult, conflicts: List[Conflict]) -> Dict[str, A
         "month": res.month,
         "day_count": res.day_count,
         "manual": res.manual,
+        "department": res.department,
         "days_meta": _days_meta(res),
         "employees": [_row_to_dict(r, res) for r in res.rows],
         "conflicts": [_conflict_to_dict(c) for c in conflicts],
@@ -416,12 +418,14 @@ def delete_employee(sid: str, index: int) -> JSONResponse:
 #  Сохранение / загрузка / генерация следующих месяцев
 # --------------------------------------------------------------------------- #
 @app.post("/api/session/{sid}/save")
-def save_schedule(sid: str, org: str = Body("", embed=True)) -> JSONResponse:
+def save_schedule(sid: str, org: str = Body("", embed=True),
+                  dept: str = Body("", embed=True)) -> JSONResponse:
     """Сохранить текущий график в локальное хранилище."""
     session = _get_session(sid)
     if session is None:
         return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
     res: ImportResult = session["result"]
+    res.department = (dept or "").strip()
     try:
         saved_id = storage.save_month(res.year, res.month, org or DEFAULT_ORG,
                                       serialize_result(res))
@@ -520,6 +524,22 @@ def edit_cell(sid: str,
     return JSONResponse(content=payload)
 
 
+@app.post("/api/session/{sid}/autocorrect")
+def autocorrect_route(sid: str) -> JSONResponse:
+    """Применить детерминированные исправления и пересчитать валидацию."""
+    session = _get_session(sid)
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
+    res: ImportResult = session["result"]
+    fixes = autocorrect(res)
+    conflicts = check_all(res)
+    session["conflicts"] = conflicts
+    payload = _result_to_dict(res, conflicts)
+    payload["session_id"] = sid
+    payload["fixes"] = fixes
+    return JSONResponse(content=payload)
+
+
 @app.post("/api/session/{sid}/autofill")
 def autofill_route(sid: str,
                    row_index: int = Body(...),
@@ -565,6 +585,25 @@ def copy_route(sid: str,
     return JSONResponse(content=payload)
 
 
+@app.get("/api/export/xls/{sid}")
+def export_xls_route(sid: str, org: Optional[str] = None,
+                     dept: Optional[str] = None) -> Response:
+    """Выгрузить исправленный график в бинарном формате Excel ``.xls``."""
+    session = _get_session(sid)
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
+    res: ImportResult = session["result"]
+    content = export_xls(res, org=org or DEFAULT_ORG,
+                         dept=dept if dept is not None else res.department)
+    filename = "graph_%d-%02d.xls" % (res.year, res.month)
+    return Response(
+        content=content,
+        media_type="application/vnd.ms-excel",
+        headers={"Content-Disposition":
+                 'attachment; filename="%s"' % filename},
+    )
+
+
 @app.get("/api/export/csv/{sid}")
 def export_csv_route(sid: str) -> Response:
     """Выгрузить исправленный график в CSV."""
@@ -591,7 +630,7 @@ def export_t13_route(sid: str, org: Optional[str] = None,
         return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
     res: ImportResult = session["result"]
     html_text = export_t13_html(res, org=org or DEFAULT_ORG,
-                                dept=dept or "")
+                                dept=dept if dept is not None else res.department)
     filename = "tabel_T13_%d-%02d.html" % (res.year, res.month)
     return Response(
         content=html_text,
@@ -610,7 +649,7 @@ def export_okud_route(sid: str, org: Optional[str] = None,
         return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
     res: ImportResult = session["result"]
     html_text = export_okud_html(res, org=org or DEFAULT_ORG,
-                                 dept=dept or "")
+                                 dept=dept if dept is not None else res.department)
     filename = "tabel_OKUD0504421_%d-%02d.html" % (res.year, res.month)
     return Response(
         content=html_text,
@@ -629,7 +668,7 @@ def export_signoff_route(sid: str, org: Optional[str] = None,
         return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
     res: ImportResult = session["result"]
     html_text = export_signoff_html(res, org=org or DEFAULT_ORG,
-                                    dept=dept or "")
+                                    dept=dept if dept is not None else res.department)
     filename = "graph_podpis_%d-%02d.html" % (res.year, res.month)
     return Response(
         content=html_text,

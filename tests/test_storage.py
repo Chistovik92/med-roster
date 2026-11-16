@@ -34,6 +34,7 @@ def make_result(year=2026, month=11):
 
 
 res = make_result()
+res.department = "УПО"
 payload = serialize_result(res)
 
 saved_id = storage.save_month(res.year, res.month, "ГУЗ «СГП № 16»", payload)
@@ -45,6 +46,7 @@ check("list_saved: year", lst[0]["year"], 2026)
 check("list_saved: month", lst[0]["month"], 11)
 check("list_saved: org", lst[0]["org"], "ГУЗ «СГП № 16»")
 check("list_saved: employee_count", lst[0]["employee_count"], 1)
+check("list_saved: dept", lst[0]["dept"], "УПО")
 
 data = storage.get_saved(saved_id)
 check("get_saved: employees", len(data["employees"]), 1)
@@ -53,6 +55,7 @@ check("restored: имя", restored.rows[0].name, "Иванов И.И.")
 check("restored: норма", restored.rows[0].week_norm, 39)
 check("restored: часы", round(restored.rows[0].total_hours, 1), 7.8)
 check("restored: manual", restored.manual, True)
+check("restored: подразделение", restored.department, "УПО")
 
 check("delete_saved: True", storage.delete_saved(saved_id), True)
 check("delete_saved повторно: False", storage.delete_saved(saved_id), False)

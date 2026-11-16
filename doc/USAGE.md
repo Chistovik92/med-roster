@@ -116,11 +116,13 @@ runs the validator (5 error types). After that you see:
 - **Employees** — an editable grid (add/remove employees).
 - **Tools** — auto-fill and copy schedule.
 
-### 4.3. Institution name
+### 4.3. Institution and department
 
-The header field **«Учреждение»** («Institution») is inserted into the printable
-forms (Т-13, ОКУД 0504421, schedule for signature) and remembered by the browser
-(`localStorage`). Default — «ГУЗ «СГП № 16»».
+The header fields **«Учреждение»** («Institution») and **«Подразделение»**
+(«Department») are inserted into XLS and printable forms (Т-13, ОКУД 0504421,
+schedule for signature) and remembered by the browser (`localStorage`). The
+department is also stored with each saved month. Default institution —
+«ГУЗ «СГП № 16»».
 
 ## 5. Editing the schedule
 
@@ -138,6 +140,10 @@ select it in the «Источник данных» card above.
 - **Error location and reason.** Invalid cells are highlighted and the employee,
   day and reason appear above the grid. Clicking an item in the errors/warnings
   list jumps to the corresponding cell or row.
+- **«Исправить ошибки автоматически»** («Correct errors automatically») recalculates
+  the norm, aligns hour totals, removes exact duplicates and shortens detected
+  pre-holiday shifts by one hour. Overlapping rates and unknown job titles remain
+  manual; review the schedule after correction.
 - **Click** a day cell to edit it. Enter an interval like `8-15,48` or a status
   code (`В`, `ОТ`, `Б`, `У`).
 - **Hotkeys.** When a cell is selected but its input field is not open: **1** —
@@ -197,10 +203,11 @@ Fill a person's empty cells with one shift:
 
 ## 8. Export
 
-All forms open in a new browser tab / download as HTML or CSV:
+Forms download as XLS, CSV or printable HTML:
 
 | Button | Format | Purpose |
 | --- | --- | --- |
+| График (.xls) | binary Excel `.xls` | corrected schedule; can be imported again |
 | График (CSV) | `;`-separated CSV | corrected schedule for Excel |
 | Табель Т-13 | printable HTML | time sheet Т-13 |
 | Табель ОКУД 0504421 | printable HTML | budget-institution time sheet |
@@ -231,6 +238,8 @@ python tests/test_shutdown.py
 python tests/test_bulk_and_meta.py
 python tests/test_launcher.py
 python tests/test_ui.py
+python tests/test_autocorrect.py
+python tests/test_xls_export.py
 ```
 
 ## 11. Stopping the service

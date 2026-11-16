@@ -55,14 +55,17 @@ curl -fsSL https://raw.githubusercontent.com/Chistovik92/med-roster/master/insta
   предпраздничных дней; автосмены и копирование графика («врач↔медсестра»);
   массовое добавление сотрудников списком; нижний «светофор»
   (зелёный/жёлтый/красный).
-- **Экспорт**: исправленный график (CSV) и печатные формы — Т-13,
+- **Автоматическое исправление** норм, итоговых сумм, точных дубликатов и
+  предпраздничных смен; спорные накладки ставок остаются на ручную проверку.
+- **Подразделение** в UI, сохранённых месяцах, `.xls` и печатных формах.
+- **Экспорт**: исправленный график (XLS и CSV) и печатные формы — Т-13,
   ОКУД 0504421, график на подпись.
 
 ## Требования
 
 - Python **3.8+** (работает на Windows 7 и Linux Debian 11–13 / Ubuntu).
 - Зависимости из `requirements.txt` (`fastapi`, `uvicorn`, `pydantic`,
-  `python-multipart`, `xlrd`).
+  `python-multipart`, `xlrd`, `xlwt`).
 
 ## Запуск
 
@@ -135,6 +138,8 @@ python tests/test_shutdown.py
 python tests/test_bulk_and_meta.py
 python tests/test_launcher.py
 python tests/test_ui.py
+python tests/test_autocorrect.py
+python tests/test_xls_export.py
 ```
 
 > Файлы `.xls` с персональными данными сотрудников в репозиторий **не** входят

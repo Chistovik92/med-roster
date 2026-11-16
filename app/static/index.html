@@ -17,6 +17,10 @@
           <span>Учреждение</span>
           <input type="text" id="org-name" placeholder="ГУЗ «СГП № 16»" autocomplete="off">
         </label>
+        <label class="org-field">
+          <span>Подразделение</span>
+          <input type="text" id="dept-name" placeholder="УПО / поликлиника" autocomplete="off">
+        </label>
       </div>
     </div>
     <div class="topbar-right">
@@ -124,6 +128,7 @@
           <div class="toolbar" id="export-toolbar" style="margin-bottom:0">
             <button id="save-month" class="btn primary">Сохранить месяц</button>
             <span class="sep"></span>
+            <button id="export-xls" class="btn primary">График (.xls)</button>
             <button id="export-csv" class="btn">График (CSV)</button>
             <button id="export-t13" class="btn">Табель Т-13</button>
             <button id="export-okud" class="btn">Табель ОКУД 0504421</button>
@@ -133,6 +138,10 @@
 
         <details class="card collapsible" id="conflicts-card">
           <summary>Ошибки и предупреждения <span id="conflicts-count" class="badge"></span></summary>
+          <div class="toolbar">
+            <button id="autocorrect-run" class="btn primary">Исправить ошибки автоматически</button>
+            <span class="hint">Нормы, итоги, точные дубликаты и предпраздничные смены. Пересечения ставок исправьте вручную.</span>
+          </div>
           <ul id="conflict-list" class="conflicts"></ul>
         </details>
 
@@ -206,7 +215,7 @@
     </section>
   </main>
 
-  <footer class="footer">med-roster 0.5.5 · Python + FastAPI · работает на Windows 7 / 10 / 11 и Linux</footer>
+  <footer class="footer">med-roster 0.6.0 · Python + FastAPI · работает на Windows 7 / 10 / 11 и Linux</footer>
 
   <script src="/static/app.js"></script>
 </body>

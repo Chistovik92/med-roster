@@ -66,6 +66,7 @@ class ImportResult:
     month: int
     day_count: int
     manual: bool = False
+    department: str = ""
     rows: List[EmployeeRow] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
 
@@ -103,6 +104,7 @@ def serialize_result(result: ImportResult) -> Dict:
         "month": result.month,
         "source": result.source,
         "manual": result.manual,
+        "department": result.department,
         "employees": employees,
     }
 
@@ -116,6 +118,7 @@ def deserialize_result(data: Dict) -> ImportResult:
         source=data.get("source", "сохранено"),
         year=year, month=month, day_count=day_count,
         manual=bool(data.get("manual", False)),
+        department=data.get("department", "") or "",
     )
     for i, e in enumerate(data.get("employees", [])):
         name = e.get("name", "") or ""
@@ -223,6 +226,11 @@ def import_xls(source, year: Optional[int] = None,
         raise ValueError("Не удалось определить период (укажите year/month явно)")
 
     day_count = calendar.monthrange(year, month)[1]
+    # Колонки итогов идут сразу после дней: для 30-дневного месяца это
+    # исходные c32/c33/c34; для 31 дня — c33/c34/c35 (день 31 не затирается).
+    col_sum = day_count + 2
+    col_extra = col_sum + 1
+    col_norm = col_sum + 2
 
     wb = _open_workbook(source)
     sh = wb.sheet_by_index(0)
@@ -235,7 +243,9 @@ def import_xls(source, year: Optional[int] = None,
         position = _to_str(sh.cell_value(r, COL_POSITION))
         if name == "":
             # строка без ФИО — пропускаем (пустая или итоговая), но логируем
-            if position != "" or _to_str(sh.cell_value(r, COL_NORM)) != "":
+            norm_value = (_to_str(sh.cell_value(r, col_norm))
+                          if sh.ncols > col_norm else "")
+            if position != "" or norm_value != "":
                 result.warnings.append("строка %d: нет ФИО, пропущена" % (r + 1))
             continue
 
@@ -251,9 +261,9 @@ def import_xls(source, year: Optional[int] = None,
                 row.parsed[d] = parse_cell(raw)
 
         row.total_hours = sum(p.total_hours for p in row.parsed.values())
-        row.sum_col = _to_float(sh.cell_value(r, COL_SUM))
-        row.norm_col = _to_float(sh.cell_value(r, COL_NORM))
-        row.extra_col = _to_str(sh.cell_value(r, COL_EXTRA))
+        row.sum_col = _to_float(sh.cell_value(r, col_sum))
+        row.norm_col = _to_float(sh.cell_value(r, col_norm))
+        row.extra_col = _to_str(sh.cell_value(r, col_extra))
 
         result.rows.append(row)
 

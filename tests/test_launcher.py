@@ -15,7 +15,12 @@ def main():
     assert "Причина:" in message
     assert "Журнал:" in message
     assert "Python:" in message
-    print("OK  сообщение запуска содержит тип, причину, журнал и версию Python")
+    with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "packaging", "medgrafik.spec"), encoding="utf-8") as f:
+        spec = f.read()
+    assert "ucrtbase.dll" in spec
+    assert 'os.path.join(_ucrt_dir, "*.dll")' in spec
+    print("OK  диагностика запуска и включение UCRT для Windows 7")
 
 
 if __name__ == "__main__":

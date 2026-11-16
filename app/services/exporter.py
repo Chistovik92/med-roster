@@ -15,6 +15,7 @@ import html as _html
 from typing import List, Optional, Tuple
 
 from app.core.constants import DEFAULT_ORG
+from app.services.norm_calculator import monthly_base_norm
 from app.services.xls_importer import ImportResult, EmployeeRow
 
 # Канонический тип неявки -> код в табеле.
@@ -81,6 +82,76 @@ def export_csv(result: ImportResult) -> str:
                 (_fmt(r.norm_col) if r.norm_col is not None else ""),
                 (("%+.1f" % dev).replace(".", ",") if dev != "" else "")]
         w.writerow(row)
+    return buf.getvalue()
+
+
+# --------------------------------------------------------------------------- #
+#  XLS — исправленный график в исходном табличном формате
+# --------------------------------------------------------------------------- #
+def export_xls(result: ImportResult, org: str = DEFAULT_ORG,
+               dept: str = "") -> bytes:
+    """Сформировать бинарный ``.xls`` с исправленными ячейками и итогами.
+
+    Дни начинаются с колонки C; сумма/дополнительная колонка/норма следуют
+    сразу после последнего дня. Поэтому файл корректен и для 30-, и для
+    31-дневного месяца и может быть снова импортирован в программу.
+    """
+    import xlwt
+
+    book = xlwt.Workbook(encoding="utf-8")
+    sheet = book.add_sheet("Лист1")
+    sum_col = result.day_count + 2
+    extra_col = sum_col + 1
+    norm_col = sum_col + 2
+
+    border = "borders: left thin, right thin, top thin, bottom thin;"
+    center = xlwt.easyxf(border + "align: horiz center, vert center;")
+    left = xlwt.easyxf(border + "align: horiz left, vert center;")
+    header = xlwt.easyxf(border + "font: bold true;align: horiz center, vert center;")
+    title = xlwt.easyxf("font: bold true, height 280;align: horiz center;")
+    meta = xlwt.easyxf("font: bold true;align: horiz left;")
+
+    sheet.col(0).width = 7000
+    sheet.col(1).width = 6500
+    for d in range(1, result.day_count + 1):
+        sheet.col(d + 1).width = 2600
+    for c in (sum_col, extra_col, norm_col):
+        sheet.col(c).width = 2500
+
+    sheet.write_merge(0, 0, 0, norm_col,
+                      "%s%s" % (org, (" · " + dept) if dept else ""), meta)
+    sheet.write_merge(1, 1, 0, norm_col, "ГРАФИК РАБОТЫ", title)
+    sheet.write_merge(2, 2, 0, norm_col,
+                      "на %s %d года" % (_RU_MONTHS_GEN[result.month - 1], result.year), meta)
+    sheet.write(11, 0, "Ф.И.О.", header)
+    sheet.write(11, 1, "Должность", header)
+    for d in range(1, result.day_count + 1):
+        sheet.write(11, d + 1, d, header)
+    sheet.write(11, sum_col, "Сумма", header)
+    sheet.write(11, extra_col, "", header)
+    sheet.write(11, norm_col, "Прим.", header)
+
+    for i, row in enumerate(result.rows, 12):
+        sheet.write(i, 0, row.name, left)
+        position = row.position
+        rate_label = ("%.2f" % row.rate).replace(".", ",").rstrip("0").rstrip(",")
+        if row.rate != 1.0 and rate_label not in position.replace(".", ","):
+            position = (position + " " if position else "") + (rate_label + " ед")
+        sheet.write(i, 1, position, left)
+        for d in range(1, result.day_count + 1):
+            sheet.write(i, d + 1, row.raw_cells.get(d, ""), center)
+        sheet.write(i, sum_col, round(row.total_hours, 1), center)
+        sheet.write(i, extra_col, row.extra_col or "", center)
+        norm = row.norm_col
+        if norm is None and row.week_norm is not None:
+            norm = monthly_base_norm(row.week_norm, result.year, result.month, row.rate)
+        if norm is not None:
+            sheet.write(i, norm_col, round(norm, 1), center)
+        else:
+            sheet.write(i, norm_col, "", center)
+
+    buf = io.BytesIO()
+    book.save(buf)
     return buf.getvalue()
 
 

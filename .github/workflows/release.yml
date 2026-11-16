@@ -51,6 +51,11 @@ jobs:
         run: |
           Compress-Archive -Path dist\MedGrafik\* -DestinationPath "MedGrafik-portable-${{ steps.ver.outputs.version }}-win32.zip"
 
+      - name: Verify Windows 7 runtime in portable zip
+        shell: pwsh
+        run: |
+          python -c "import glob,zipfile; p=glob.glob('MedGrafik-portable-*.zip')[0]; n=zipfile.ZipFile(p).namelist(); assert 'ucrtbase.dll' in n; assert '_socket.pyd' in n; assert any(x.startswith('api-ms-win-crt-') for x in n); print('UCRT + _socket included:', p)"
+
       - uses: actions/upload-artifact@v4
         with:
           name: windows-installer

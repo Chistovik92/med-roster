@@ -56,14 +56,17 @@ saved months are preserved.
   `В`/`О`/`Б`/`У` (status codes); weekend/pre-holiday highlighting; auto-fill
   shifts and copy schedules ("doctor ↔ nurse"); bulk-adding employees from a
   list; bottom "traffic light" (green/yellow/red).
-- **Export**: corrected schedule (CSV) and printable forms — T-13, OKUD 0504421,
+- **Automatic correction** of norms, hour totals, exact duplicates and shortened
+  pre-holiday shifts; ambiguous overlapping rates remain manual.
+- **Department field** in the UI, saved months, XLS and printable forms.
+- **Export**: corrected schedule (XLS and CSV) and printable forms — T-13, OKUD 0504421,
   schedule for approval/signature.
 
 ## Requirements
 
 - Python **3.8+** (works on Windows 7 and Linux Debian 11–13 / Ubuntu).
 - Dependencies from `requirements.txt` (`fastapi`, `uvicorn`, `pydantic`,
-  `python-multipart`, `xlrd`).
+  `python-multipart`, `xlrd`, `xlwt`).
 
 ## Quick start
 
@@ -136,6 +139,8 @@ python tests/test_shutdown.py
 python tests/test_bulk_and_meta.py
 python tests/test_launcher.py
 python tests/test_ui.py
+python tests/test_autocorrect.py
+python tests/test_xls_export.py
 ```
 
 > `.xls` files containing personal data of employees are **not** committed to the

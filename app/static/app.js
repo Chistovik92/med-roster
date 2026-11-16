@@ -255,10 +255,24 @@
     localStorage.setItem(ORG_KEY, orgName);
   });
 
+  var DEPT_KEY = "medroster.dept";
+  var deptName = localStorage.getItem(DEPT_KEY) || "";
+  var deptInput = document.getElementById("dept-name");
+  deptInput.value = deptName;
+  deptInput.addEventListener("change", function () {
+    deptName = deptInput.value.trim();
+    localStorage.setItem(DEPT_KEY, deptName);
+    if (currentData) currentData.department = deptName;
+  });
+
   function exportUrl(path) {
-    return path + "?org=" + encodeURIComponent(orgName);
+    return path + "?org=" + encodeURIComponent(orgName) +
+      "&dept=" + encodeURIComponent(deptName);
   }
 
+  document.getElementById("export-xls").addEventListener("click", function () {
+    if (currentSessionId) download(exportUrl("/api/export/xls/" + currentSessionId));
+  });
   document.getElementById("export-csv").addEventListener("click", function () {
     if (currentSessionId) download("/api/export/csv/" + currentSessionId);
   });
@@ -330,7 +344,8 @@
           var op = document.createElement("option");
           op.value = s.id;
           op.textContent = MONTHS[s.month - 1] + " " + s.year +
-            " — " + s.employee_count + " сотр." + (s.org ? " · " + s.org : "");
+            " — " + s.employee_count + " сотр." + (s.org ? " · " + s.org : "") +
+            (s.dept ? " · " + s.dept : "");
           sel.appendChild(op);
         });
       })
@@ -386,7 +401,7 @@
     jsonFetch("/api/session/" + currentSessionId + "/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ org: orgName })
+      body: JSON.stringify({ org: orgName, dept: deptName })
     }).then(function (res) {
       if (!res.ok) { setStatus("Ошибка: " + (res.data.error || "неизвестно"), "error"); return; }
       setStatus("Месяц " + MONTHS[res.data.month - 1] + " " + res.data.year + " сохранён", "ok");
@@ -397,6 +412,11 @@
   // ---- применение результата сервера ----
   function fullRefresh(data) {
     empTbody = null;
+    if (data.department) {
+      deptName = data.department;
+      deptInput.value = deptName;
+      localStorage.setItem(DEPT_KEY, deptName);
+    }
     document.getElementById("import-results").classList.remove("hidden");
     applyServerResult(data);
     // подсказки для генерации следующего месяца
@@ -1042,6 +1062,27 @@
     }).catch(function (e) {
       showTableError("Добавление списком: ошибка сети — " + e, "error network");
     });
+  });
+
+  // ---- автоматическое исправление известных схем ошибок ----
+  document.getElementById("autocorrect-run").addEventListener("click", function () {
+    if (!currentSessionId) return;
+    if (!confirm("Автоматически исправить нормы, итоги, точные дубликаты и предпраздничные смены?\n\nПересечения ставок и неизвестные должности останутся для ручной проверки.")) return;
+    jsonFetch("/api/session/" + currentSessionId + "/autocorrect", { method: "POST" })
+      .then(function (res) {
+        if (!res.ok) {
+          showTableError("Автокоррекция: " + (res.data.error || "неизвестная ошибка"), "error");
+          return;
+        }
+        var count = (res.data.fixes || []).length;
+        fullRefresh(res.data);
+        showTableError(count ? "Автоматически исправлено: " + count +
+          ". Проверьте результат перед экспортом." :
+          "Нет ошибок, которые можно исправить автоматически.", "ok");
+      })
+      .catch(function (e) {
+        showTableError("Автокоррекция: ошибка сети — " + e, "error network");
+      });
   });
 
   // ---- инструменты: автозаполнение и копирование ----

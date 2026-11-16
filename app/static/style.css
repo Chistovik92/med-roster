@@ -376,7 +376,9 @@ main { max-width: none; padding: 8px 10px 34px; }
 h1 { font-size: 16px; }
 .sub { display: none; }
 .org-field { margin-top: 2px; }
+.brand .org-field { display: inline-flex; margin-right: 6px; }
 .org-field input { min-width: 220px; padding: 4px 7px; }
+#dept-name { min-width: 170px; }
 .topbar-right { gap: 8px; }
 .tab, .btn { padding: 5px 10px; }
 .card { padding: 8px 10px; margin-bottom: 8px; }

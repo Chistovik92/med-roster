@@ -16,9 +16,11 @@
 
 ## Windows
 
-1. Установите **32-разрядный Python 3.8.10** (для Windows 7 x86/x64) и
+1. Установите **32-разрядный Python 3.8.10**, Windows 10 SDK (UCRT x86) и
    [NSIS](https://nsis.sourceforge.io/). Скрипт использует PyInstaller **4.10**:
-   более новые линейки официально рассчитаны на Windows 8+.
+   более новые линейки официально рассчитаны на Windows 8+. Файлы
+   `ucrtbase.dll` и `api-ms-win-crt-*.dll` обязательно включаются в пакет для
+   запуска `_socket` на Windows 7 без предустановленного UCRT.
 2. Запустите `build_windows.bat` (или `build_windows.bat py -3.8-32`).
 3. Результат: `dist\MedGrafik\MedGrafik.exe` и
    `packaging\MedGrafik-Setup-<ver>.exe`.

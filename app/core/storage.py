@@ -96,6 +96,7 @@ def list_saved() -> List[Dict]:
             "year": r["year"],
             "month": r["month"],
             "org": r["org"],
+            "dept": (data or {}).get("department", ""),
             "source": r["source"],
             "saved_at": r["saved_at"],
             "employee_count": len((data or {}).get("employees", [])),

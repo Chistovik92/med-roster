@@ -18,6 +18,9 @@ def main():
     assert 'id="cell-error"' in html
     assert 'role="alert"' in html
     assert 'id="conflicts-count"' in html
+    assert 'id="autocorrect-run"' in html
+    assert 'id="export-xls"' in html
+    assert 'id="dept-name"' in html
     assert '<details class="card collapsible setup-card">' in html
     assert "table-layout: fixed" in css
     assert "max-height: calc(100vh" in css
