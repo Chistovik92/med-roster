@@ -41,3 +41,6 @@ packaging/MedGrafik-Setup-*.exe
 
 # Системные обновления должны поставляться в portable/установщике.
 !packaging/windows/*.msu
+
+# Служебные/временные дубликаты (напр. CHANGELOG_old.md).
+*_old.md

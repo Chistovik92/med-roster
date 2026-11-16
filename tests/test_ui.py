@@ -2,51 +2,79 @@
 """Регрессионные проверки компактного интерфейса и контекста ошибок."""
 import os
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
 
 def read(path):
-    with open(os.path.join(ROOT, path), encoding="utf-8") as f:
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(root, path), encoding="utf-8") as f:
         return f.read()
 
 
-def main():
+def test_index_html_structure():
     html = read("app/static/index.html")
-    css = read("app/static/style.css")
-    js = read("app/static/app.js")
+    for needle in (
+        'id="cell-error"',
+        'role="alert"',
+        'id="conflicts-count"',
+        'id="autocorrect-run"',
+        'id="export-xls"',
+        'id="dept-name"',
+        'id="updates-open"',
+        'id="updates-modal"',
+        'id="updates-install"',
+        'id="updates-deps"',
+        'id="cell-editor"',
+        'id="cell-editor-input"',
+        'id="saved-save"',
+        'id="saved-export"',
+        'id="saved-import"',
+        'id="saved-rename-btn"',
+        '<details class="card collapsible setup-card">',
+    ):
+        assert needle in html, needle
 
-    assert 'id="cell-error"' in html
-    assert 'role="alert"' in html
-    assert 'id="conflicts-count"' in html
-    assert 'id="autocorrect-run"' in html
-    assert 'id="export-xls"' in html
-    assert 'id="dept-name"' in html
-    assert 'id="updates-open"' in html
-    assert 'id="updates-modal"' in html
-    assert 'id="updates-install"' in html
-    assert 'id="updates-deps"' in html
-    assert 'id="cell-editor"' in html
-    assert 'id="cell-editor-input"' in html
-    assert 'id="saved-save"' in html
-    assert 'id="saved-export"' in html
-    assert 'id="saved-import"' in html
-    assert 'id="saved-rename-btn"' in html
-    assert '<details class="card collapsible setup-card">' in html
+
+def test_style_css_compact():
+    css = read("app/static/style.css")
     assert "table-layout: fixed" in css
     assert "max-height: calc(100vh" in css
     assert "position: sticky; left: 0" in css
-    assert "function showCellProblems" in js
-    assert "function cellProblems" in js
-    assert "function focusConflict" in js
-    assert "data.day_count * 24" in js
-    assert "function checkUpdates" in js
-    assert '"/api/maintenance/app"' in js
-    assert "function startEdit" in js
-    assert "cell-editor-input" in js
-    assert '"/api/saved/import"' in js
-    assert '"/api/saved/export"' in js
-    print("OK  компактная таблица, контекст ошибок и переходы к ячейкам присутствуют")
 
 
-if __name__ == "__main__":
-    main()
+def test_app_js_functions():
+    js = read("app/static/app.js")
+    for needle in (
+        "function showCellProblems",
+        "function cellProblems",
+        "function focusConflict",
+        "data.day_count * 24",
+        "function checkUpdates",
+        '"/api/maintenance/app"',
+        "function startEdit",
+        "cell-editor-input",
+        '"/api/saved/import"',
+        '"/api/saved/export"',
+    ):
+        assert needle in js, needle
+
+
+def test_js_does_not_use_falsy_index_check():
+    """Регрессия: нельзя проверять индекс сотрудника как ``!rowIndex`` —
+    у первого сотрудника index == 0, и он ложно трактуется как «не выбран»."""
+    js = read("app/static/app.js")
+    # Явная проверка выбора сотрудника должна использовать isNaN, а не !rowIndex.
+    assert "isNaN(rowIndex)" in js
+    assert "isNaN(fromIndex)" in js
+    assert "isNaN(toIndex)" in js
+
+
+def test_js_cell_cache_and_draft():
+    """Регрессия: кэш DOM-ячеек и черновик присутствуют в фронтенде."""
+    js = read("app/static/app.js")
+    assert "cellCache" in js
+    assert "cacheRowCells" in js
+    # черновик: восстановление несохранённой работы при старте
+    assert '"/api/draft"' in js
+    assert '"/api/draft/restore"' in js
+    # предупреждение о несохранённых изменениях
+    assert "beforeunload" in js
+    assert "isDirty" in js

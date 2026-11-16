@@ -1,19 +1,13 @@
 # -*- coding: utf-8 -*-
 """Тесты планирования (автосмены, копирование графика)."""
-import sys, os
+import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.services.xls_importer import ImportResult, EmployeeRow
 from app.services.time_parser import parse_cell
 from app.services.scheduler import autofill, copy_schedule, generate_month
-
-fails = 0
-def check(name, actual, expected):
-    global fails
-    ok = (actual == expected)
-    if not ok:
-        fails += 1
-    print(("OK  " if ok else "FAIL") + " %-48s = %r (ожид. %r)" % (name, actual, expected))
 
 
 def mk_row(index, name, position, days=None, week_norm=39, rate=1.0):
@@ -32,79 +26,102 @@ def res_for(rows, year=2026, month=11, day_count=30):
                         day_count=day_count, rows=rows)
 
 
+def test_autofill_first_employee_index_zero():
+    """Регрессия: первый сотрудник имеет index=0, операции не должны его пропускать."""
+    res = res_for([mk_row(0, "Первый", "зубной врач", week_norm=33)])
+    autofill(res, 0, "8-15,48", mode="workdays")
+    assert res.rows[0].raw_cells.get(2, "") == "8-15,48"
+
+
+def test_copy_first_employee_index_zero():
+    """Регрессия: копирование графика с/на сотрудника index=0 работает."""
+    res = res_for([
+        mk_row(0, "Врач", "вр.пед.уч.", days={2: "8-15,48"}),
+        mk_row(1, "Медсестра", "м/с"),
+    ])
+    copy_schedule(res, 0, 1)
+    assert res.rows[1].raw_cells[2] == "8-15,48"
+
+
 # --- autofill: только рабочие дни ------------------------------------------- #
-# ноябрь 2026: рабочие дни — 2,3,5,6,9,10,11,12,13,16,17,18,19,20,23,24,25,26,27,30
-res = res_for([mk_row(12, "Иванов И.И.", "зубной врач", week_norm=33)])
-warnings = autofill(res, 12, "8-15,48", mode="workdays")
-row = res.rows[0]
-check("autofill: день 1 (вс) пуст", row.raw_cells.get(1, ""), "")
-check("autofill: день 2 (рабочий) заполнен", row.raw_cells.get(2, ""), "8-15,48")
-check("autofill: день 3 (предпраздн.) заполнен", row.raw_cells.get(3, ""), "8-15,48")
-check("autofill: день 8 (вс) пуст", row.raw_cells.get(8, ""), "")
-# ноябрь 2026: 20 рабочих дней, все по 7,8 ч
-check("autofill: часов 20x7,8", round(row.total_hours, 1), 156.0)
-check("autofill: нет предупреждений", warnings, [])
+def test_autofill_workdays():
+    # ноябрь 2026: рабочие дни — 2,3,5,6,9,10,11,12,13,16,17,18,19,20,23,24,25,26,27,30
+    res = res_for([mk_row(12, "Иванов И.И.", "зубной врач", week_norm=33)])
+    warnings = autofill(res, 12, "8-15,48", mode="workdays")
+    row = res.rows[0]
+    assert row.raw_cells.get(1, "") == ""
+    assert row.raw_cells.get(2, "") == "8-15,48"
+    assert row.raw_cells.get(3, "") == "8-15,48"
+    assert row.raw_cells.get(8, "") == ""
+    assert round(row.total_hours, 1) == 156.0
+    assert warnings == []
 
-# заполненные не перезаписываются
-res2 = res_for([mk_row(12, "Петров П.П.", "зубной врач", week_norm=33,
-                       days={2: "8-12"})])
-autofill(res2, 12, "12,12-20", mode="workdays")
-check("autofill: заполненный день не трогается", res2.rows[0].raw_cells[2], "8-12")
-check("autofill: остальные рабочие заполнены", res2.rows[0].raw_cells[3], "12,12-20")
 
-# --- autofill: код статуса -------------------------------------------------- #
-res3 = res_for([mk_row(12, "Сидоров С.С.", "мед. регистр.", week_norm=40)])
-autofill(res3, 12, "В", mode="empty")
-check("autofill status: день 1 = В", res3.rows[0].parsed[1].kind, "status")
-check("autofill status: все 30 дней заполнены", len(res3.rows[0].parsed), 30)
+def test_autofill_does_not_overwrite():
+    res = res_for([mk_row(12, "Петров П.П.", "зубной врач", week_norm=33,
+                          days={2: "8-12"})])
+    autofill(res, 12, "12,12-20", mode="workdays")
+    assert res.rows[0].raw_cells[2] == "8-12"
+    assert res.rows[0].raw_cells[3] == "12,12-20"
 
-# --- autofill: ошибки ------------------------------------------------------- #
-res4 = res_for([mk_row(12, "А", "м/с")])
-try:
-    autofill(res4, 12, "мусор", mode="empty")
-    check("autofill: плохая смена -> ошибка", False, True)
-except ValueError:
-    check("autofill: плохая смена -> ошибка", True, True)
-try:
-    autofill(res4, 999, "8-15,48", mode="empty")
-    check("autofill: несуществующий сотрудник -> ошибка", False, True)
-except ValueError:
-    check("autofill: несуществующий сотрудник -> ошибка", True, True)
+
+def test_autofill_status_code():
+    res = res_for([mk_row(12, "Сидоров С.С.", "мед. регистр.", week_norm=40)])
+    autofill(res, 12, "В", mode="empty")
+    assert res.rows[0].parsed[1].kind == "status"
+    assert len(res.rows[0].parsed) == 30
+
+
+def test_autofill_errors():
+    res = res_for([mk_row(12, "А", "м/с")])
+    try:
+        autofill(res, 12, "мусор", mode="empty")
+        assert False, "плохая смена должна вызывать ValueError"
+    except ValueError:
+        pass
+    try:
+        autofill(res, 999, "8-15,48", mode="empty")
+        assert False, "несуществующий сотрудник должен вызывать ValueError"
+    except ValueError:
+        pass
+
 
 # --- copy_schedule ---------------------------------------------------------- #
-res5 = res_for([
-    mk_row(12, "Врач", "вр.пед.уч.", days={2: "8-15,48", 3: "8-15,48", 4: "В"}),
-    mk_row(13, "Медсестра", "м/с"),
-])
-copy_schedule(res5, 12, 13)
-dst = res5.rows[1]
-check("copy: день 2 скопирован", dst.raw_cells[2], "8-15,48")
-check("copy: день 3 скопирован", dst.raw_cells[3], "8-15,48")
-check("copy: код В скопирован", dst.raw_cells[4], "В")
-check("copy: часов совпадает", round(dst.total_hours, 1), 15.6)
+def test_copy_schedule():
+    res = res_for([
+        mk_row(12, "Врач", "вр.пед.уч.", days={2: "8-15,48", 3: "8-15,48", 4: "В"}),
+        mk_row(13, "Медсестра", "м/с"),
+    ])
+    copy_schedule(res, 12, 13)
+    dst = res.rows[1]
+    assert dst.raw_cells[2] == "8-15,48"
+    assert dst.raw_cells[3] == "8-15,48"
+    assert dst.raw_cells[4] == "В"
+    assert round(dst.total_hours, 1) == 15.6
+
 
 # --- generate_month --------------------------------------------------------- #
-src = res_for([
-    mk_row(12, "Врач", "вр.пед.уч.", week_norm=39, rate=0.5,
-           days={2: "8-15,48", 3: "8-15,48"}),
-])
-g = generate_month(src, 2026, 12, copy_shifts=False)
-check("generate: месяц", (g.year, g.month), (2026, 12))
-check("generate: состав перенесён", len(g.rows), 1)
-check("generate: имя", g.rows[0].name, "Врач")
-check("generate: ставка", g.rows[0].rate, 0.5)
-check("generate: норма", g.rows[0].week_norm, 39)
-check("generate: без смен — часы 0", g.rows[0].total_hours, 0.0)
+def test_generate_month_no_shifts():
+    src = res_for([
+        mk_row(12, "Врач", "вр.пед.уч.", week_norm=39, rate=0.5,
+               days={2: "8-15,48", 3: "8-15,48"}),
+    ])
+    g = generate_month(src, 2026, 12, copy_shifts=False)
+    assert (g.year, g.month) == (2026, 12)
+    assert len(g.rows) == 1
+    assert g.rows[0].name == "Врач"
+    assert g.rows[0].rate == 0.5
+    assert g.rows[0].week_norm == 39
+    assert g.rows[0].total_hours == 0.0
 
-# с переносом смен по дням недели: 2 и 3 ноября 2026 — пн и вт
-g2 = generate_month(src, 2026, 12, copy_shifts=True)
-filled = [d for d in range(1, g2.day_count + 1)
-          if g2.rows[0].raw_cells.get(d, "") != ""]
-# в декабре 2026 понедельников и вторников по 5 → 10 заполненных дней
-check("generate: перенос по дням недели заполнил дни",
-      len(filled) > 0, True)
-check("generate: смены скопированы (все 8-15,48)",
-      all(g2.rows[0].raw_cells[d] == "8-15,48" for d in filled), True)
 
-print("\nИТОГО ПРОВАЛОВ: %d" % fails)
-sys.exit(1 if fails else 0)
+def test_generate_month_copy_shifts():
+    src = res_for([
+        mk_row(12, "Врач", "вр.пед.уч.", week_norm=39, rate=0.5,
+               days={2: "8-15,48", 3: "8-15,48"}),
+    ])
+    g2 = generate_month(src, 2026, 12, copy_shifts=True)
+    filled = [d for d in range(1, g2.day_count + 1)
+              if g2.rows[0].raw_cells.get(d, "") != ""]
+    assert len(filled) > 0
+    assert all(g2.rows[0].raw_cells[d] == "8-15,48" for d in filled)

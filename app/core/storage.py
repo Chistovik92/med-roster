@@ -20,10 +20,15 @@ import json
 import os
 import sqlite3
 import sys
+import tempfile
 import time
 from typing import Dict, List, Optional
 
 _DB_FILENAME = "med-roster.db"
+
+# Файл черновика (несохранённый график текущей сессии). Восстанавливается при
+# запуске, чтобы пользователь не потерял работу после закрытия/сбоя программы.
+_DRAFT_FILENAME = "draft.json"
 
 
 def get_data_dir() -> str:
@@ -222,3 +227,87 @@ def delete_saved(saved_id: int) -> bool:
     with _connect() as conn:
         cur = conn.execute("DELETE FROM saved_months WHERE id=?", (saved_id,))
         return cur.rowcount > 0
+
+
+# --------------------------------------------------------------------------- #
+#  Черновик (draft): автосохранение текущей сессии без участия пользователя.
+#
+#  Отличие от «сохранённых месяцев»: черновик пишется автоматически при каждом
+#  изменении графика и переживает перезапуск программы. Это страховка от потери
+#  несохранённой работы (закрытие вкладки, сбой, отключение питания).
+# --------------------------------------------------------------------------- #
+def _draft_path() -> str:
+    return os.path.join(get_data_dir(), _DRAFT_FILENAME)
+
+
+def save_draft(payload: Dict) -> None:
+    """Атомарно сохранить черновик (запись во временный файл + rename).
+
+    Запись во временный файл и последующий ``os.replace`` гарантируют, что при
+    сбое в середине записи на диске не останется «половинчатого» JSON — либо
+    старый черновик, либо новый, но никогда не битый.
+    """
+    os.makedirs(get_data_dir(), exist_ok=True)
+    path = _draft_path()
+    fd, tmp_path = tempfile.mkstemp(prefix=".draft-", suffix=".tmp",
+                                    dir=get_data_dir())
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except BaseException:
+        # не оставляем временный файл при любой ошибке
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def load_draft() -> Optional[Dict]:
+    """Загрузить черновик, если он есть и не повреждён.
+
+    Возвращает ``None``, если файла нет или он не читается/битый. Битый черновик
+    не должен ломать запуск программы — просто игнорируем его.
+    """
+    path = _draft_path()
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return None
+        return data
+    except (OSError, ValueError):
+        return None
+
+
+def clear_draft() -> None:
+    """Удалить черновик (после сохранения месяца или по явной команде)."""
+    try:
+        os.remove(_draft_path())
+    except OSError:
+        pass
+
+
+def draft_info() -> Dict:
+    """Сводка о черновике: есть ли он, период, число сотрудников, время записи."""
+    data = load_draft()
+    if data is None:
+        return {"exists": False}
+    try:
+        mtime = os.path.getmtime(_draft_path())
+    except OSError:
+        mtime = 0.0
+    return {
+        "exists": True,
+        "year": data.get("year"),
+        "month": data.get("month"),
+        "manual": bool(data.get("manual", False)),
+        "department": data.get("department", "") or "",
+        "employee_count": len(data.get("employees", []) or []),
+        "saved_at": mtime,
+    }

@@ -55,6 +55,11 @@ _MAX_SESSIONS = 8
 # Время жизни сессии без обращений, секунды (30 минут).
 _SESSION_TTL = 30 * 60
 
+# Максимальный размер загружаемого файла (байты). График поликлиники (~124 чел.)
+# в формате .xls весит десятки КБ; лимит защищает от случайной загрузки гиганта
+# и от исчерпания памяти на слабом железе (2 ГБ).
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 МБ
+
 
 def _gc_sessions() -> None:
     """Вытеснить просроченные и лишние сессии (защита от роста памяти)."""
@@ -178,6 +183,7 @@ def _refresh_session(sid: str) -> JSONResponse:
     res: ImportResult = session["result"]
     conflicts = check_all(res)
     session["conflicts"] = conflicts
+    _autosave_draft(res)
     payload = _result_to_dict(res, conflicts)
     payload["session_id"] = sid
     return JSONResponse(content=payload)
@@ -188,6 +194,19 @@ def _find_row(res: ImportResult, row_index: int) -> Optional[EmployeeRow]:
         if r.index == row_index:
             return r
     return None
+
+
+def _autosave_draft(res: ImportResult) -> None:
+    """Сохранить текущий график как черновик (страховка от потери работы).
+
+    Пишет через ``storage.save_draft`` (атомарно). Ошибки записи не должны
+    ломать основной поток редактирования — поэтому молча игнорируем их (черновик
+    — это только подстраховка, основное сохранение пользователь делает сам).
+    """
+    try:
+        storage.save_draft(serialize_result(res))
+    except OSError:
+        pass
 
 
 # --------------------------------------------------------------------------- #
@@ -268,6 +287,9 @@ async def import_file(file: UploadFile = File(...),
     data = await file.read()
     if not data:
         return JSONResponse(status_code=400, content={"error": "пустой файл"})
+    if len(data) > MAX_UPLOAD_BYTES:
+        return JSONResponse(status_code=413, content={
+            "error": "файл слишком большой (максимум 20 МБ)"})
 
     try:
         res = import_xls(data, year=year, month=month, filename=file.filename)
@@ -431,6 +453,7 @@ def save_schedule(sid: str, org: str = Body("", embed=True),
     try:
         saved_id = storage.save_month(res.year, res.month, org or DEFAULT_ORG,
                                       serialize_result(res), title=(title or ""))
+        storage.clear_draft()
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(status_code=500, content={"error": str(exc)})
     return JSONResponse(content={"id": saved_id, "year": res.year,
@@ -445,6 +468,42 @@ def saved_list() -> JSONResponse:
                                      "data_dir": storage.get_data_dir()})
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+# --------------------------------------------------------------------------- #
+#  Черновик: автосохранение текущей работы и восстановление после перезапуска
+# --------------------------------------------------------------------------- #
+@app.get("/api/draft")
+def draft_info() -> JSONResponse:
+    """Сводка о сохранённом черновике (есть ли, период, число сотрудников)."""
+    try:
+        return JSONResponse(content=storage.draft_info())
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+@app.post("/api/draft/restore")
+def draft_restore() -> JSONResponse:
+    """Восстановить черновик в новую сессию (если он есть).
+
+    Возвращает 404, если черновика нет. Используется при старте, чтобы вернуть
+    пользователю несохранённую работу после перезапуска программы.
+    """
+    data = storage.load_draft()
+    if data is None:
+        return JSONResponse(status_code=404, content={"error": "черновика нет"})
+    try:
+        res = deserialize_result(data)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(status_code=422, content={"error": str(exc)})
+    return _new_session(res)
+
+
+@app.delete("/api/draft")
+def draft_clear() -> JSONResponse:
+    """Удалить черновик (пользователь решил начать заново / сохранил месяц)."""
+    storage.clear_draft()
+    return JSONResponse(content={"cleared": True})
 
 
 @app.post("/api/saved/{saved_id}/rename")
@@ -489,6 +548,9 @@ async def import_database_route(file: UploadFile = File(...)) -> JSONResponse:
     data = await file.read()
     if not data:
         return JSONResponse(status_code=400, content={"error": "пустой файл"})
+    if len(data) > MAX_UPLOAD_BYTES:
+        return JSONResponse(status_code=413, content={
+            "error": "файл слишком большой (максимум 20 МБ)"})
     import tempfile
     fd, path = tempfile.mkstemp(suffix=".db", prefix="med-roster-import-")
     try:
@@ -580,6 +642,7 @@ def edit_cell(sid: str,
 
     conflicts = check_all(res)
     session["conflicts"] = conflicts
+    _autosave_draft(res)
     payload = _result_to_dict(res, conflicts)
     payload["session_id"] = sid
     return JSONResponse(content=payload)
@@ -595,6 +658,7 @@ def autocorrect_route(sid: str) -> JSONResponse:
     fixes = autocorrect(res)
     conflicts = check_all(res)
     session["conflicts"] = conflicts
+    _autosave_draft(res)
     payload = _result_to_dict(res, conflicts)
     payload["session_id"] = sid
     payload["fixes"] = fixes
@@ -620,6 +684,7 @@ def autofill_route(sid: str,
         return JSONResponse(status_code=422, content={"error": str(exc)})
     conflicts = check_all(res)
     session["conflicts"] = conflicts
+    _autosave_draft(res)
     payload = _result_to_dict(res, conflicts)
     payload["session_id"] = sid
     payload["warnings"] = res.warnings + warnings
@@ -641,6 +706,7 @@ def copy_route(sid: str,
         return JSONResponse(status_code=422, content={"error": str(exc)})
     conflicts = check_all(res)
     session["conflicts"] = conflicts
+    _autosave_draft(res)
     payload = _result_to_dict(res, conflicts)
     payload["session_id"] = sid
     return JSONResponse(content=payload)

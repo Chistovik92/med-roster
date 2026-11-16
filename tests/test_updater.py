@@ -11,19 +11,17 @@ from app import __version__
 from app.services import updater
 
 
-def main():
-    original = updater._json_url
-    try:
-        updater._json_url = lambda url: {
-            "tag_name": "v99.0.0", "html_url": "https://example.test/release"
-        }
-        status = updater.app_status()
-        assert status["current"] == __version__
-        assert status["latest"] == "99.0.0"
-        assert status["available"] is True
-    finally:
-        updater._json_url = original
+def test_app_status(monkeypatch):
+    monkeypatch.setattr(updater, "_json_url", lambda url: {
+        "tag_name": "v99.0.0", "html_url": "https://example.test/release"
+    })
+    status = updater.app_status()
+    assert status["current"] == __version__
+    assert status["latest"] == "99.0.0"
+    assert status["available"] is True
 
+
+def test_safe_extract():
     tmp = tempfile.mkdtemp(prefix="med-roster-update-test-")
     archive = os.path.join(tmp, "update.zip")
     target = os.path.join(tmp, "files")
@@ -34,7 +32,12 @@ def main():
     updater._safe_extract(archive, target)
     assert os.path.isfile(os.path.join(target, "MedGrafik.exe"))
 
+
+def test_safe_extract_rejects_path_traversal():
+    tmp = tempfile.mkdtemp(prefix="med-roster-update-test-")
     bad = os.path.join(tmp, "bad.zip")
+    target = os.path.join(tmp, "files")
+    os.makedirs(target)
     with zipfile.ZipFile(bad, "w") as zf:
         zf.writestr("../bad", b"bad")
     try:
@@ -43,8 +46,3 @@ def main():
         pass
     else:
         raise AssertionError("небезопасный путь архива должен отклоняться")
-    print("OK  проверка версии, структура update ZIP и защита распаковки")
-
-
-if __name__ == "__main__":
-    main()

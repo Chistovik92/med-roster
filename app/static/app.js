@@ -137,6 +137,8 @@
   var currentSessionId = null;
   var currentData = null;
   var empTbody = null;   // ссылка на tbody таблицы сотрудников (для инкремента)
+  var isDirty = false;   // есть ли несохранённые изменения (для предупреждения)
+  var cellCache = {};    // карта "rowIndex:day" -> <td> (для быстрой навигации)
 
   function manualMode() { return !!(currentData && currentData.manual); }
   function dayOff(day) {
@@ -371,6 +373,7 @@
       }).then(function (res) {
         if (!res.ok) { setStatus("Ошибка: " + (res.data.error || "неизвестно"), "error"); return; }
         setStatus("Месяц " + MONTHS[res.data.month - 1] + " " + res.data.year + " обновлён", "ok");
+        isDirty = false;
         refreshSaved();
       }).catch(function (e) { setStatus("Ошибка сети: " + e, "error"); });
     } else {
@@ -383,6 +386,7 @@
         if (!res.ok) { setStatus("Ошибка: " + (res.data.error || "неизвестно"), "error"); return; }
         setStatus("Месяц " + MONTHS[res.data.month - 1] + " " + res.data.year + " сохранён", "ok");
         if (currentData) currentData.savedId = res.data.id;
+        isDirty = false;
         refreshSaved();
       }).catch(function (e) { setStatus("Ошибка сети: " + e, "error"); });
     }
@@ -694,8 +698,18 @@
     else if (cf.warn > 0) tr.classList.add("has-warning");
   }
 
+  function cacheRowCells(tr) {
+    var row = parseInt(tr.dataset.index, 10);
+    var tds = tr.querySelectorAll("td.editable");
+    for (var i = 0; i < tds.length; i++) {
+      var d = parseInt(tds[i].dataset.day, 10);
+      cellCache[row + ":" + d] = tds[i];
+    }
+  }
+
   function renderEmployees(data) {
     var manual = !!(data && data.manual);
+    cellCache = {};
     var wrap = document.getElementById("emp-table-wrap");
     wrap.innerHTML = "";
     var table = el("table", "grid");
@@ -726,7 +740,9 @@
     var tbody = el("tbody");
     data.employees.forEach(function (emp) {
       var cf = conflictsFor(emp, data.conflicts);
-      tbody.appendChild(buildEmployeeRow(emp, cf, data.day_count));
+      var row = buildEmployeeRow(emp, cf, data.day_count);
+      tbody.appendChild(row);
+      cacheRowCells(row);
     });
     table.appendChild(tbody);
     // 24 px на день: на экране от 1280 px обычно помещается весь месяц.
@@ -759,6 +775,7 @@
         var fresh = buildEmployeeRow(emp, cf, data.day_count);
         if (tr) tbody.replaceChild(fresh, tr);
         else tbody.appendChild(fresh);
+        cacheRowCells(fresh);
       } else {
         updateRowDot(tr, cf);
       }
@@ -768,6 +785,10 @@
       if (!present[idx]) {
         var tr = map[idx];
         if (tr && tr.parentNode) tr.parentNode.removeChild(tr);
+        // удаляем ячейки строки из кэша
+        Object.keys(cellCache).forEach(function (key) {
+          if (key.indexOf(idx + ":") === 0) delete cellCache[key];
+        });
       }
     });
   }
@@ -788,6 +809,10 @@
   }
 
   function findCell(rowIndex, day) {
+    // быстрый путь: кэш ячеек (строится при отрисовке таблицы)
+    var cached = cellCache[rowIndex + ":" + day];
+    if (cached && cached.parentNode) return cached;
+    // медленный путь (на случай рассинхронизации кэша): перебор по DOM
     var wrap = document.getElementById("emp-table-wrap");
     var tds = wrap.querySelectorAll("td.editable");
     for (var i = 0; i < tds.length; i++) {
@@ -1058,6 +1083,7 @@
         return;
       }
       applyServerResult(res.data, [rowIndex]);
+      isDirty = true;
       var savedTd = findCell(rowIndex, day);
       var emp = empById(rowIndex);
       var cell = emp && emp.days[String(day)];
@@ -1083,6 +1109,7 @@
         renderEmployees(currentData);
         return;
       }
+      isDirty = true;
       fullRefresh(res.data);
     }).catch(function (e) {
       showTableError("Строка сотрудника: ошибка сети — " + e, "error network");
@@ -1114,6 +1141,7 @@
       document.getElementById("emp-name").value = "";
       document.getElementById("emp-position").value = "";
       showTableError("");
+      isDirty = true;
       fullRefresh(res.data);
     }).catch(function (e) {
       showTableError("Добавление сотрудника: ошибка сети — " + e, "error network");
@@ -1129,6 +1157,7 @@
       method: "DELETE"
     }).then(function (res) {
       if (!res.ok) { alert("Ошибка: " + (res.data.error || "неизвестно")); return; }
+      isDirty = true;
       fullRefresh(res.data);
     }).catch(function (e) { alert("Ошибка сети: " + e); });
   }
@@ -1185,6 +1214,7 @@
       document.getElementById("emp-bulk-text").value = "";
       document.getElementById("emp-bulk-box").classList.add("hidden");
       showTableError("Добавлено сотрудников: " + employees.length, "ok");
+      isDirty = true;
       fullRefresh(res.data);
     }).catch(function (e) {
       showTableError("Добавление списком: ошибка сети — " + e, "error network");
@@ -1202,6 +1232,7 @@
           return;
         }
         var count = (res.data.fixes || []).length;
+        isDirty = true;
         fullRefresh(res.data);
         showTableError(count ? "Автоматически исправлено: " + count +
           ". Проверьте результат перед экспортом." :
@@ -1226,6 +1257,7 @@
         return;
       }
       applyServerResult(res.data, changedIndices || []);
+      isDirty = true;
     }).catch(function (e) {
       showTableError("Операция не выполнена, ошибка сети: " + e, "error network");
     });
@@ -1236,10 +1268,11 @@
     if (this.value) document.getElementById("tool-shift").value = this.value;
   });
 
-  document.getElementById("tool-autofill").addEventListener("click", function () {    var rowIndex = parseInt(document.getElementById("tool-emp").value, 10);
+  document.getElementById("tool-autofill").addEventListener("click", function () {
+    var rowIndex = parseInt(document.getElementById("tool-emp").value, 10);
     var shift = document.getElementById("tool-shift").value.trim();
     var workdays = document.getElementById("tool-workdays").checked;
-    if (!rowIndex) { alert("Выберите сотрудника"); return; }
+    if (isNaN(rowIndex)) { alert("Выберите сотрудника"); return; }
     if (!shift) { alert("Введите смену (например, 8-15,48)"); return; }
     postTool("/autofill", { row_index: rowIndex, shift: shift, mode: workdays ? "workdays" : "empty" }, [rowIndex]);
   });
@@ -1247,7 +1280,7 @@
   document.getElementById("tool-copy").addEventListener("click", function () {
     var fromIndex = parseInt(document.getElementById("tool-from").value, 10);
     var toIndex = parseInt(document.getElementById("tool-to").value, 10);
-    if (!fromIndex || !toIndex) { alert("Выберите обоих сотрудников"); return; }
+    if (isNaN(fromIndex) || isNaN(toIndex)) { alert("Выберите обоих сотрудников"); return; }
     if (fromIndex === toIndex) { alert("Выберите разных сотрудников"); return; }
     postTool("/copy", { from_index: fromIndex, to_index: toIndex }, [toIndex]);
   });
@@ -1386,7 +1419,33 @@
   // Чтобы можно было сразу вносить данные в таблицу, при старте создаём пустой
   // график на текущий месяц. Импорт / загрузка сохранённого / генерация остаются
   // доступны в карточке «Источник данных» выше.
+  //
+  // Но прежде проверяем черновик: если предыдущая работа не была сохранена
+  // (закрытие вкладки / сбой), восстанавливаем её, чтобы пользователь не потерял
+  // введённые смены.
   function autoOpenSchedule() {
+    jsonFetch("/api/draft").then(function (res) {
+      var hasDraft = res.ok && res.data && res.data.exists && res.data.employee_count > 0;
+      if (hasDraft) {
+        restoreDraft();
+      } else {
+        openCurrentMonth();
+      }
+    }).catch(function () { openCurrentMonth(); });
+  }
+
+  function restoreDraft() {
+    jsonFetch("/api/draft/restore", { method: "POST" }).then(function (res) {
+      if (!res.ok) { openCurrentMonth(); return; }
+      currentSessionId = res.data.session_id;
+      setStatus("Восстановлен несохранённый график (" +
+        MONTHS[res.data.month - 1] + " " + res.data.year +
+        "). Сохраните его или продолжите редактирование.", "ok");
+      fullRefresh(res.data);
+    }).catch(function () { openCurrentMonth(); });
+  }
+
+  function openCurrentMonth() {
     var now = new Date();
     var y = now.getFullYear();
     var m = now.getMonth() + 1;
@@ -1404,6 +1463,16 @@
       fullRefresh(res.data);
     }).catch(function () { /* без автооткрытия — можно начать вручную */ });
   }
+
+  // ---- предупреждение о несохранённых изменениях при закрытии вкладки ----
+  // Браузер сам показывает диалог подтверждения; текст мы задать не можем (это
+  // ограничение безопасности браузеров), но можем отменить закрытие.
+  window.addEventListener("beforeunload", function (ev) {
+    if (!isDirty) return;
+    ev.preventDefault();
+    ev.returnValue = "";
+    return "";
+  });
 
   // ---- старт ----
   loadCalendar(parseInt(document.getElementById("cal-year").value, 10) || 2026);

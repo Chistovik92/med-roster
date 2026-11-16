@@ -12,7 +12,7 @@ from app.services.xls_importer import (
 )
 
 
-def main():
+def _make_row():
     row = EmployeeRow(index=12, name="Иванова И.И.", position="вр.пед.уч.",
                       rate=0.5, week_norm=39, norm_col=77.5)
     row.raw_cells[1] = "8-15,48"
@@ -20,6 +20,11 @@ def main():
     row.parsed[1] = parse_cell(row.raw_cells[1])
     row.parsed[31] = parse_cell(row.raw_cells[31])
     row.total_hours = sum(p.total_hours for p in row.parsed.values())
+    return row
+
+
+def test_xls_roundtrip():
+    row = _make_row()
     original = ImportResult(source="test", year=2026, month=12, day_count=31,
                             department="УПО", rows=[row])
 
@@ -35,11 +40,11 @@ def main():
     assert saved.sum_col == 15.6
     assert saved.norm_col == 77.5
 
+
+def test_serialize_department():
+    row = _make_row()
+    original = ImportResult(source="test", year=2026, month=12, day_count=31,
+                            department="УПО", rows=[row])
     payload = serialize_result(original)
     assert payload["department"] == "УПО"
     assert deserialize_result(payload).department == "УПО"
-    print("OK  XLS roundtrip: 31 день, ставка, сумма, норма; подразделение сохранено")
-
-
-if __name__ == "__main__":
-    main()

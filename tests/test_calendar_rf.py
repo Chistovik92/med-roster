@@ -9,28 +9,13 @@
   * 2020 — ПП РФ от 10.07.2019 N 875
   * 2021 — ПП РФ от 10.10.2020 N 1648
 """
-import sys, os, datetime as dt
+import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.core.calendar_rf import get_year_calendar, build_year_calendar, exact_years
+from app.core.calendar_rf import get_year_calendar, build_year_calendar, exact_years  # noqa: F401
 
-out = []
-fails = 0
-
-def log(s=""):
-    out.append(str(s))
-
-def check(name, actual, expected):
-    global fails
-    if isinstance(expected, bool):
-        ok = (actual == expected)
-    elif isinstance(expected, (list, tuple)):
-        ok = (list(actual) == list(expected))
-    else:
-        ok = abs(actual - expected) < 1e-9
-    if not ok:
-        fails += 1
-    log(("OK " if ok else "FAIL ") + name + " = " + str(actual) + " (ожид. " + str(expected) + ")")
 
 # =========================================================================== #
 #  Полная помесячная проверка 2024–2027
@@ -54,22 +39,24 @@ FULL = {
         short_dates=[(2,20),(4,30),(6,11),(11,3)]),
 }
 
-for year, spec in FULL.items():
-    c = get_year_calendar(year)
-    log("=" * 60)
-    log("ГОД %d (need_verify=%s)" % (year, c.need_verify))
-    tw = ts = 0
-    for m in range(1, 13):
-        w, s = c.month_stats(m)
-        tw += w; ts += s
-        ew, es = spec['months'][m]
-        check("%d мес %02d раб.дней" % (year, m), w, ew)
-        check("%d мес %02d предпраздн." % (year, m), s, es)
-    check("%d раб.дней всего" % year, tw, spec['total_work'])
-    check("%d предпраздн. всего" % year, ts, spec['total_short'])
-    check("%d норма 40ч год" % year, c.norm_hours(40), spec['year_norm40'])
-    short_dates = sorted((d.date.month, d.date.day) for d in c.days if d.is_shortened)
-    check("%d список сокращённых" % year, short_dates, spec['short_dates'])
+
+def test_full_monthly_2024_2027():
+    for year, spec in FULL.items():
+        c = get_year_calendar(year)
+        tw = ts = 0
+        for m in range(1, 13):
+            w, s = c.month_stats(m)
+            tw += w
+            ts += s
+            ew, es = spec["months"][m]
+            assert w == ew, "%d мес %02d раб.дней" % (year, m)
+            assert s == es, "%d мес %02d предпраздн." % (year, m)
+        assert tw == spec["total_work"], "%d раб.дней всего" % year
+        assert ts == spec["total_short"], "%d предпраздн. всего" % year
+        assert c.norm_hours(40) == spec["year_norm40"], "%d норма 40ч год" % year
+        short_dates = sorted((d.date.month, d.date.day) for d in c.days if d.is_shortened)
+        assert short_dates == spec["short_dates"], "%d список сокращённых" % year
+
 
 # =========================================================================== #
 #  Итоги и ключевые даты 2020–2023
@@ -84,49 +71,45 @@ KEY_DATES = {
     # год: [(месяц, день, ожид_рабочий_день?), ...]
     2020: [(5,4,False),(5,5,False)],                    # перенос с 4/5 января
     2021: [(2,20,True),(2,22,False),(11,5,False),(12,31,False)],  # рабочая суббота + переносы
-    2022: [(3,5,True),(3,7,False),(5,3,False),(5,10,False)],      # рабочая суббота + переносы
+    2022: [(3,5,True),(3,7,False),(5,3,False),(5,10,False)],    # рабочая суббота + переносы
     2023: [(2,24,False),(5,8,False)],                  # переносы с 1/8 января
 }
-for year, (tw, tsh, sdates) in TOTALS.items():
-    c = get_year_calendar(year)
-    w, off, sh = c.year_stats()
-    log("=" * 60)
-    log("ГОД %d (need_verify=%s)" % (year, c.need_verify))
-    check("%d раб.дней всего" % year, w, tw)
-    check("%d предпраздн. всего" % year, sh, tsh)
-    check("%d список сокращённых" % year,
-          sorted((d.date.month, d.date.day) for d in c.days if d.is_shortened), sdates)
-    for (m, d, is_work) in KEY_DATES[year]:
-        check("%d %02d.%02d рабочий" % (year, d, m), c.is_work(m, d), is_work)
+
+
+def test_totals_2020_2023():
+    for year, (tw, tsh, sdates) in TOTALS.items():
+        c = get_year_calendar(year)
+        w, off, sh = c.year_stats()
+        assert w == tw, "%d раб.дней всего" % year
+        assert sh == tsh, "%d предпраздн. всего" % year
+        assert sorted((d.date.month, d.date.day) for d in c.days if d.is_shortened) == sdates
+        for (m, d, is_work) in KEY_DATES[year]:
+            assert c.is_work(m, d) == is_work, "%d %02d.%02d рабочий" % (year, d, m)
+
 
 # =========================================================================== #
 #  «Любой год»: 1990..2040 — календарь всегда строится, високосные корректны
 # =========================================================================== #
-log("=" * 60)
-log("ПРОИЗВОЛЬНЫЕ ГОДЫ 1990..2040")
-for year in range(1990, 2041):
-    c = get_year_calendar(year)
-    w, off, sh = c.year_stats()
-    total = w + off
-    exp_total = 366 if (year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)) else 365
-    if total != exp_total:
-        check("год %d всего дней" % year, total, exp_total)
-    if year in exact_years():
-        assert c.need_verify is False
-    else:
-        assert c.need_verify is True
-check("точные годы = 2020..2027", exact_years(), list(range(2020, 2028)))
+def test_arbitrary_years_1990_2040():
+    for year in range(1990, 2041):
+        c = get_year_calendar(year)
+        w, off, sh = c.year_stats()
+        total = w + off
+        exp_total = 366 if (year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)) else 365
+        assert total == exp_total, "год %d всего дней" % year
+        if year in exact_years():
+            assert c.need_verify is False
+        else:
+            assert c.need_verify is True
 
-# Високосный 2024 = 366 дней, невисокосный 2026 = 365
-check("2024 дней", sum(1 for _ in get_year_calendar(2024).days), 366)
-check("2026 дней", sum(1 for _ in get_year_calendar(2026).days), 365)
-check("2000 високосный (366)", sum(1 for _ in get_year_calendar(2000).days), 366)
-check("1900 невисокосный (365)", sum(1 for _ in get_year_calendar(1900).days), 365)
 
-log("")
-log("ИТОГО ПРОВАЛОВ: %d" % fails)
+def test_exact_years_range():
+    assert exact_years() == list(range(2020, 2028))
 
-with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "calendar_result.txt"), "w", encoding="utf-8") as f:
-    f.write("\n".join(out))
 
-sys.exit(1 if fails else 0)
+def test_leap_years():
+    # Високосный 2024 = 366 дней, невисокосный 2026 = 365
+    assert sum(1 for _ in get_year_calendar(2024).days) == 366
+    assert sum(1 for _ in get_year_calendar(2026).days) == 365
+    assert sum(1 for _ in get_year_calendar(2000).days) == 366
+    assert sum(1 for _ in get_year_calendar(1900).days) == 365
