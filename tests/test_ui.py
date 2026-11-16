@@ -25,6 +25,12 @@ def main():
     assert 'id="updates-modal"' in html
     assert 'id="updates-install"' in html
     assert 'id="updates-deps"' in html
+    assert 'id="cell-editor"' in html
+    assert 'id="cell-editor-input"' in html
+    assert 'id="saved-save"' in html
+    assert 'id="saved-export"' in html
+    assert 'id="saved-import"' in html
+    assert 'id="saved-rename-btn"' in html
     assert '<details class="card collapsible setup-card">' in html
     assert "table-layout: fixed" in css
     assert "max-height: calc(100vh" in css
@@ -35,6 +41,10 @@ def main():
     assert "data.day_count * 24" in js
     assert "function checkUpdates" in js
     assert '"/api/maintenance/app"' in js
+    assert "function startEdit" in js
+    assert "cell-editor-input" in js
+    assert '"/api/saved/import"' in js
+    assert '"/api/saved/export"' in js
     print("OK  компактная таблица, контекст ошибок и переходы к ячейкам присутствуют")
 
 

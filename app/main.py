@@ -420,8 +420,9 @@ def delete_employee(sid: str, index: int) -> JSONResponse:
 # --------------------------------------------------------------------------- #
 @app.post("/api/session/{sid}/save")
 def save_schedule(sid: str, org: str = Body("", embed=True),
-                  dept: str = Body("", embed=True)) -> JSONResponse:
-    """Сохранить текущий график в локальное хранилище."""
+                  dept: str = Body("", embed=True),
+                  title: str = Body("", embed=True)) -> JSONResponse:
+    """Сохранить текущий график в локальное хранилище (новая копия)."""
     session = _get_session(sid)
     if session is None:
         return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
@@ -429,7 +430,7 @@ def save_schedule(sid: str, org: str = Body("", embed=True),
     res.department = (dept or "").strip()
     try:
         saved_id = storage.save_month(res.year, res.month, org or DEFAULT_ORG,
-                                      serialize_result(res))
+                                      serialize_result(res), title=(title or ""))
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(status_code=500, content={"error": str(exc)})
     return JSONResponse(content={"id": saved_id, "year": res.year,
@@ -440,9 +441,49 @@ def save_schedule(sid: str, org: str = Body("", embed=True),
 def saved_list() -> JSONResponse:
     """Список сохранённых месяцев."""
     try:
-        return JSONResponse(content={"saved": storage.list_saved()})
+        return JSONResponse(content={"saved": storage.list_saved(),
+                                     "data_dir": storage.get_data_dir()})
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+@app.post("/api/saved/{saved_id}/rename")
+def rename_saved_route(saved_id: int, title: str = Body(..., embed=True)) -> JSONResponse:
+    """Переименовать сохранённый месяц."""
+    ok = storage.rename_saved(saved_id, title)
+    if not ok:
+        return JSONResponse(status_code=404, content={"error": "сохранение не найдено"})
+    return JSONResponse(content={"id": saved_id, "title": (title or "").strip()})
+
+
+@app.get("/api/saved/export")
+def export_database_route() -> FileResponse:
+    """Скачать полную базу сохранённых месяцев (копия в указанное место)."""
+    path = storage.export_database()
+    return FileResponse(path, media_type="application/octet-stream",
+                        filename="med-roster.db")
+
+
+@app.post("/api/saved/import")
+async def import_database_route(file: UploadFile = File(...)) -> JSONResponse:
+    """Загрузить стороннюю базу ``med-roster.db`` и объединить с локальной."""
+    data = await file.read()
+    if not data:
+        return JSONResponse(status_code=400, content={"error": "пустой файл"})
+    import tempfile
+    fd, path = tempfile.mkstemp(suffix=".db", prefix="med-roster-import-")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        added = storage.import_database(path)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(status_code=422, content={"error": str(exc)})
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    return JSONResponse(content={"added": added})
 
 
 @app.post("/api/saved/{saved_id}/load")

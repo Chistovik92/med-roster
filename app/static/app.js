@@ -333,6 +333,9 @@
         var sel = document.getElementById("saved-list");
         sel.innerHTML = "";
         if (!res.ok) return;
+        var dirHint = document.getElementById("saved-dir");
+        if (dirHint) dirHint.textContent = res.data.data_dir ?
+          "База: " + res.data.data_dir : "";
         var list = res.data.saved || [];
         if (!list.length) {
           var op = document.createElement("option");
@@ -343,13 +346,30 @@
         list.forEach(function (s) {
           var op = document.createElement("option");
           op.value = s.id;
-          op.textContent = MONTHS[s.month - 1] + " " + s.year +
+          op.textContent = (s.title ? s.title + " · " : "") +
+            MONTHS[s.month - 1] + " " + s.year +
             " — " + s.employee_count + " сотр." + (s.org ? " · " + s.org : "") +
             (s.dept ? " · " + s.dept : "");
           sel.appendChild(op);
         });
       })
       .catch(function (e) { console.error(e); });
+  }
+
+  function saveCurrentMonth() {
+    if (!currentSessionId) {
+      setStatus("Сначала создайте или откройте график", "error");
+      return;
+    }
+    jsonFetch("/api/session/" + currentSessionId + "/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ org: orgName, dept: deptName })
+    }).then(function (res) {
+      if (!res.ok) { setStatus("Ошибка: " + (res.data.error || "неизвестно"), "error"); return; }
+      setStatus("Месяц " + MONTHS[res.data.month - 1] + " " + res.data.year + " сохранён", "ok");
+      refreshSaved();
+    }).catch(function (e) { setStatus("Ошибка сети: " + e, "error"); });
   }
 
   document.getElementById("saved-load").addEventListener("click", function () {
@@ -378,6 +398,45 @@
       .catch(function (e) { setStatus("Ошибка сети: " + e, "error"); });
   });
 
+  document.getElementById("saved-save").addEventListener("click", saveCurrentMonth);
+
+  document.getElementById("saved-export").addEventListener("click", function () {
+    download("/api/saved/export");
+  });
+
+  document.getElementById("saved-rename-btn").addEventListener("click", function () {
+    var id = parseInt(document.getElementById("saved-list").value, 10);
+    var title = document.getElementById("saved-rename").value.trim();
+    if (!id) { setStatus("Выберите месяц в списке", "error"); return; }
+    if (!title) { setStatus("Введите новое название", "error"); return; }
+    jsonFetch("/api/saved/" + id + "/rename", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: title })
+    }).then(function (res) {
+      if (!res.ok) { setStatus("Ошибка: " + (res.data.error || "неизвестно"), "error"); return; }
+      document.getElementById("saved-rename").value = "";
+      setStatus("Название обновлено", "ok");
+      refreshSaved();
+    }).catch(function (e) { setStatus("Ошибка сети: " + e, "error"); });
+  });
+
+  document.getElementById("saved-import-btn").addEventListener("click", function () {
+    var fileInput = document.getElementById("saved-import");
+    if (!fileInput.files.length) { setStatus("Выберите файл базы .db", "error"); return; }
+    var fd = new FormData();
+    fd.append("file", fileInput.files[0]);
+    setStatus("Импорт базы…");
+    jsonFetch("/api/saved/import", { method: "POST", body: fd })
+      .then(function (res) {
+        if (!res.ok) { setStatus("Ошибка: " + (res.data.error || "неизвестно"), "error"); return; }
+        fileInput.value = "";
+        setStatus("Добавлено записей из базы: " + res.data.added, "ok");
+        refreshSaved();
+      })
+      .catch(function (e) { setStatus("Ошибка сети: " + e, "error"); });
+  });
+
   document.getElementById("gen-run").addEventListener("click", function () {
     if (!currentSessionId) { setStatus("Сначала создайте или загрузите график", "error"); return; }
     var y = parseInt(document.getElementById("gen-year").value, 10);
@@ -396,18 +455,7 @@
     }).catch(function (e) { setStatus("Ошибка сети: " + e, "error"); });
   });
 
-  document.getElementById("save-month").addEventListener("click", function () {
-    if (!currentSessionId) return;
-    jsonFetch("/api/session/" + currentSessionId + "/save", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ org: orgName, dept: deptName })
-    }).then(function (res) {
-      if (!res.ok) { setStatus("Ошибка: " + (res.data.error || "неизвестно"), "error"); return; }
-      setStatus("Месяц " + MONTHS[res.data.month - 1] + " " + res.data.year + " сохранён", "ok");
-      refreshSaved();
-    }).catch(function (e) { setStatus("Ошибка сети: " + e, "error"); });
-  });
+  document.getElementById("save-month").addEventListener("click", saveCurrentMonth);
 
   // ---- применение результата сервера ----
   function fullRefresh(data) {
@@ -771,6 +819,8 @@
   // клик вне таблицы — снять выделение (чтобы горячие клавиши не срабатывали)
   document.addEventListener("click", function (ev) {
     var wrap = document.getElementById("emp-table-wrap");
+    var editor = document.getElementById("cell-editor");
+    if (editor && editor.contains(ev.target)) return;
     if (selectedTd && !wrap.contains(ev.target)) {
       selectedTd.classList.remove("selected");
       selectedTd = null;
@@ -810,44 +860,104 @@
     }
   });
 
+  // Крупный плавающий редактор ячейки: таблица остаётся на месте, а значение
+  // видно и редактируется в отдельном поле большого размера.
+  var cellEditor = {
+    td: null, input: null, finished: false,
+  };
+
+  function closeCellEditor() {
+    document.getElementById("cell-editor").classList.add("hidden");
+    cellEditor.td = null;
+    cellEditor.input = null;
+    cellEditor.finished = false;
+  }
+
+  function positionCellEditor(td) {
+    var box = document.getElementById("cell-editor");
+    var rect = td.getBoundingClientRect();
+    var w = box.offsetWidth || 260;
+    var h = box.offsetHeight || 120;
+    var left = rect.left + rect.width / 2 - w / 2;
+    var top = rect.bottom + 6;
+    var vw = window.innerWidth || document.documentElement.clientWidth;
+    var vh = window.innerHeight || document.documentElement.clientHeight;
+    if (left + w > vw - 8) left = vw - w - 8;
+    if (left < 8) left = 8;
+    if (top + h > vh - 8) top = rect.top - h - 6;
+    if (top < 8) top = 8;
+    box.style.left = Math.round(left) + "px";
+    box.style.top = Math.round(top) + "px";
+  }
+
   function startEdit(td) {
+    if (cellEditor.td && cellEditor.td !== td) closeCellEditor();
     var raw = td.textContent;
     if (raw === "·") raw = "";
     selectCell(td);
-    td.classList.add("editing");
-    td.dataset.prev = td.textContent;
-    td.innerHTML = "";
-    var input = document.createElement("input");
+
+    var emp = empById(parseInt(td.dataset.row, 10));
+    var day = parseInt(td.dataset.day, 10);
+    var info = document.getElementById("cell-editor-info");
+    info.textContent = (emp ? emp.name : "") + " · день " + day;
+
+    var box = document.getElementById("cell-editor");
+    var input = document.getElementById("cell-editor-input");
+    box.classList.remove("hidden");
     input.value = raw;
-    td.appendChild(input);
+    cellEditor.td = td;
+    cellEditor.input = input;
+    cellEditor.finished = false;
+    positionCellEditor(td);
     input.focus();
     input.select();
 
-    var finished = false;
     function commit(navDir) {
-      if (finished) return;
-      finished = true;
-      var val = input.value.trim();
+      if (cellEditor.finished) return;
+      cellEditor.finished = true;
+      var val = cellEditor.input.value.trim();
       var rowIndex = parseInt(td.dataset.row, 10);
-      var day = parseInt(td.dataset.day, 10);
-      saveCell(rowIndex, day, val, navDir);
+      var d = parseInt(td.dataset.day, 10);
+      closeCellEditor();
+      saveCell(rowIndex, d, val, navDir);
     }
     function cancel() {
-      if (finished) return;
-      finished = true;
-      td.classList.remove("editing");
-      td.textContent = td.dataset.prev;
+      if (cellEditor.finished) return;
+      cellEditor.finished = true;
+      closeCellEditor();
       selectCell(td);
     }
-    input.addEventListener("keydown", function (ev) {
+    input.onkeydown = function (ev) {
       if (ev.key === "Enter") { ev.preventDefault(); commit("down"); }
       else if (ev.key === "Tab") { ev.preventDefault(); commit("right"); }
       else if (ev.key === "Escape") { ev.preventDefault(); cancel(); }
-    });
-    input.addEventListener("blur", function () {
-      if (!finished) commit();
-    });
+    };
+    input.onblur = function () {
+      if (!cellEditor.finished) commit(null);
+    };
   }
+
+  document.getElementById("cell-editor-save").addEventListener("mousedown", function (ev) {
+    ev.preventDefault();
+    if (cellEditor.td) {
+      var td = cellEditor.td;
+      var val = cellEditor.input.value.trim();
+      var rowIndex = parseInt(td.dataset.row, 10);
+      var d = parseInt(td.dataset.day, 10);
+      cellEditor.finished = true;
+      closeCellEditor();
+      saveCell(rowIndex, d, val, "down");
+    }
+  });
+  document.getElementById("cell-editor-cancel").addEventListener("mousedown", function (ev) {
+    ev.preventDefault();
+    if (cellEditor.td) {
+      var td = cellEditor.td;
+      cellEditor.finished = true;
+      closeCellEditor();
+      selectCell(td);
+    }
+  });
 
   function startMetaEdit(td) {
     var field = td.dataset.field;

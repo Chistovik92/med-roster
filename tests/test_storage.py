@@ -57,10 +57,27 @@ check("restored: часы", round(restored.rows[0].total_hours, 1), 7.8)
 check("restored: manual", restored.manual, True)
 check("restored: подразделение", restored.department, "УПО")
 
-check("delete_saved: True", storage.delete_saved(saved_id), True)
-check("delete_saved повторно: False", storage.delete_saved(saved_id), False)
-check("get_saved после удаления: None", storage.get_saved(saved_id), None)
+# переименование
+check("rename_saved: True", storage.rename_saved(saved_id, "Ноябрьский график"), True)
+check("list_saved: title", storage.list_saved()[0]["title"], "Ноябрьский график")
+
+# экспорт/импорт базы (копируем в отдельный файл — это «сторонняя» база)
+import shutil
+export_path = storage.export_database()
+check("export_database: файл существует", os.path.isfile(export_path), True)
+external = os.path.join(_TMP, "external.db")
+shutil.copyfile(export_path, external)
+imported = storage.import_database(external)
+check("import_database: повторно ничего не добавлено (дубли)", imported, 0)
+storage.delete_saved(saved_id)
+imported = storage.import_database(external)
+check("import_database: восстановлена удалённая запись", imported, 1)
+
+# удаляем все оставшиеся записи (после импорта id могли измениться)
+for rec in storage.list_saved():
+    storage.delete_saved(rec["id"])
 check("list_saved после удаления: пусто", storage.list_saved(), [])
+check("get_saved после удаления: None", storage.get_saved(saved_id), None)
 
 shutil.rmtree(_TMP, ignore_errors=True)
 print("\nИТОГО ПРОВАЛОВ: %d" % fails)

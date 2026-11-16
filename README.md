@@ -61,6 +61,8 @@ saved months are preserved.
 - **Department field** in the UI, saved months, XLS and printable forms.
 - **Update centre**: GitHub release and Python dependency checks, in-app updates
   for portable/installed Windows and Linux with automatic restart.
+- **Large cell editor** and a months database: save/rename months, export the
+  whole database to a chosen location, and import an external database.
 - **Export**: corrected schedule (XLS and CSV) and printable forms — T-13, OKUD 0504421,
   schedule for approval/signature.
 

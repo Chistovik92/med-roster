@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import sys
 import time
 from typing import Dict, List, Optional
 
@@ -26,10 +27,17 @@ _DB_FILENAME = "med-roster.db"
 
 
 def get_data_dir() -> str:
-    """Каталог данных пользователя (создаётся по требованию)."""
+    """Каталог данных (создаётся по требованию).
+
+    В portable / установленной сборке данные лежат рядом с программой, чтобы
+    базу можно было переносить вместе с папкой. При запуске из исходников —
+    каталог данных пользователя.
+    """
     env = os.environ.get("MEDROSTER_DATA_DIR")
     if env:
         return env
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
     if os.name == "nt":
         base = os.environ.get("APPDATA") or os.path.expanduser("~")
         return os.path.join(base, "med-roster")
@@ -50,7 +58,7 @@ def _connect() -> sqlite3.Connection:
 
 
 def init_db() -> None:
-    """Создать таблицу, если её ещё нет (идемпотентно)."""
+    """Создать таблицу, если её ещё нет (идемпотентно, с миграциями)."""
     with _connect() as conn:
         conn.execute(
             """
@@ -65,19 +73,34 @@ def init_db() -> None:
             )
             """
         )
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(saved_months)").fetchall()]
+        if "title" not in cols:
+            conn.execute("ALTER TABLE saved_months ADD COLUMN title TEXT NOT NULL DEFAULT ''")
 
 
-def save_month(year: int, month: int, org: str, payload: Dict) -> int:
+def save_month(year: int, month: int, org: str, payload: Dict,
+               title: str = "") -> int:
     """Сохранить месяц, вернуть id записи."""
     init_db()
     with _connect() as conn:
         cur = conn.execute(
-            "INSERT INTO saved_months (year, month, org, source, data, saved_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO saved_months (year, month, org, source, data, saved_at, title) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (int(year), int(month), org or "", payload.get("source", ""),
-             json.dumps(payload, ensure_ascii=False), time.time()),
+             json.dumps(payload, ensure_ascii=False), time.time(),
+             (title or "").strip()),
         )
         return int(cur.lastrowid)
+
+
+def rename_saved(saved_id: int, title: str) -> bool:
+    """Переименовать сохранённый месяц; True, если запись существовала."""
+    init_db()
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE saved_months SET title=? WHERE id=?",
+            ((title or "").strip(), int(saved_id)))
+        return cur.rowcount > 0
 
 
 def list_saved() -> List[Dict]:
@@ -85,7 +108,7 @@ def list_saved() -> List[Dict]:
     init_db()
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, year, month, org, source, saved_at, data "
+            "SELECT id, year, month, org, source, saved_at, data, title "
             "FROM saved_months ORDER BY year DESC, month DESC, id DESC"
         ).fetchall()
     out = []
@@ -99,9 +122,77 @@ def list_saved() -> List[Dict]:
             "dept": (data or {}).get("department", ""),
             "source": r["source"],
             "saved_at": r["saved_at"],
+            "title": r["title"],
             "employee_count": len((data or {}).get("employees", [])),
         })
     return out
+
+
+def export_database() -> str:
+    """Вернуть путь к файлу БД (для копирования базы в выбранное место)."""
+    init_db()
+    return _db_path()
+
+
+def import_database(source_path: str) -> int:
+    """Импортировать записи из сторонней базы ``med-roster.db``.
+
+    Возвращает число добавленных записей. Файл проверяется: должен содержать
+    таблицу ``saved_months`` с нужными колонками. Существующие записи
+    локальной базы сохраняются (объединение по содержимому).
+    """
+    init_db()
+    source = sqlite3.connect(source_path)
+    source.row_factory = sqlite3.Row
+    try:
+        cols = [r[1] for r in source.execute("PRAGMA table_info(saved_months)").fetchall()]
+        required = {"year", "month", "org", "source", "data"}
+        if not required.issubset(set(cols)):
+            raise ValueError("Файл не является базой med-roster (нет таблицы saved_months)")
+
+        title_in = "title" in cols
+        if title_in:
+            rows = source.execute(
+                "SELECT year, month, org, source, data, saved_at, title FROM saved_months").fetchall()
+        else:
+            rows = source.execute(
+                "SELECT year, month, org, source, data, saved_at FROM saved_months").fetchall()
+    finally:
+        source.close()
+
+    local = _connect()
+    try:
+        existing = set()
+        for r in local.execute("SELECT year, month, data FROM saved_months").fetchall():
+            try:
+                d = json.loads(r["data"])
+            except ValueError:
+                d = r["data"]
+            existing.add((r["year"], r["month"], json.dumps(d, sort_keys=True, ensure_ascii=False)))
+
+        added = 0
+        for row in rows:
+            try:
+                data = json.loads(row["data"])
+            except ValueError:
+                data = row["data"]
+            key = (row["year"], row["month"],
+                   json.dumps(data, sort_keys=True, ensure_ascii=False))
+            if key in existing:
+                continue
+            title = row["title"] if title_in else ""
+            local.execute(
+                "INSERT INTO saved_months (year, month, org, source, data, saved_at, title) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (int(row["year"]), int(row["month"]), row["org"] or "",
+                 row["source"] or "", json.dumps(data, ensure_ascii=False),
+                 float(row["saved_at"] or 0.0), (title or "").strip()))
+            existing.add(key)
+            added += 1
+        local.commit()
+        return added
+    finally:
+        local.close()
 
 
 def get_saved(saved_id: int) -> Optional[Dict]:

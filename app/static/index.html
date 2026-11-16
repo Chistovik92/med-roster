@@ -105,6 +105,19 @@
               <button id="saved-load" class="btn">Загрузить</button>
               <button id="saved-delete" class="btn danger">Удалить</button>
             </div>
+            <div class="toolbar">
+              <button id="saved-save" class="btn primary">Сохранить месяц</button>
+              <button id="saved-export" class="btn">Сохранить базу (копия)</button>
+              <span id="saved-dir" class="hint"></span>
+            </div>
+            <div class="toolbar" style="margin:0">
+              <input type="text" id="saved-rename" placeholder="Новое название месяца" autocomplete="off" style="width:200px">
+              <button id="saved-rename-btn" class="btn">Переименовать</button>
+            </div>
+            <div class="toolbar" style="margin:0">
+              <input type="file" id="saved-import" accept=".db">
+              <button id="saved-import-btn" class="btn">Подгрузить базу</button>
+            </div>
           </div>
 
           <div class="src-block">
@@ -235,7 +248,16 @@
     </div>
   </div>
 
-  <footer class="footer">med-roster 0.6.2 · Python + FastAPI · работает на Windows 7 / 10 / 11 и Linux</footer>
+  <div id="cell-editor" class="cell-editor hidden" role="dialog" aria-label="Редактор ячейки">
+    <div id="cell-editor-info" class="cell-editor-info"></div>
+    <input type="text" id="cell-editor-input" autocomplete="off" spellcheck="false">
+    <div class="toolbar">
+      <button id="cell-editor-save" class="btn primary" type="button">Сохранить</button>
+      <button id="cell-editor-cancel" class="btn" type="button">Отмена</button>
+    </div>
+  </div>
+
+  <footer class="footer">med-roster 0.6.3 · Python + FastAPI · работает на Windows 7 / 10 / 11 и Linux</footer>
 
   <script src="/static/app.js"></script>
 </body>

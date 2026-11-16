@@ -529,3 +529,35 @@ input[type="number"], input[type="file"], input[type="text"], select { padding: 
 .update-row .available { color: var(--warn-ink); font-weight: 650; }
 .update-error { color: var(--error-ink); white-space: normal; }
 #updates-status { white-space: pre-wrap; }
+
+/* ---------- Крупный редактор ячейки (поверх таблицы) ---------- */
+.cell-editor {
+  position: fixed;
+  z-index: 90;
+  min-width: 220px;
+  max-width: 320px;
+  padding: 10px 12px;
+  border: 2px solid var(--brand);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 8px 28px rgba(16, 24, 40, .35);
+}
+.cell-editor-info {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cell-editor input {
+  width: 100%;
+  font-size: 22px;
+  padding: 8px 10px;
+  text-align: center;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fffbe6;
+  color: var(--ink);
+}
+.cell-editor .toolbar { margin: 8px 0 0; justify-content: center; }
