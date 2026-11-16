@@ -67,9 +67,13 @@
   var tabs = document.querySelectorAll(".tab");
   tabs.forEach(function (t) {
     t.addEventListener("click", function () {
-      tabs.forEach(function (x) { x.classList.remove("active"); });
+      tabs.forEach(function (x) {
+        x.classList.remove("active");
+        x.setAttribute("aria-selected", "false");
+      });
       document.querySelectorAll(".panel").forEach(function (p) { p.classList.remove("active"); });
       t.classList.add("active");
+      t.setAttribute("aria-selected", "true");
       document.getElementById("tab-" + t.dataset.tab).classList.add("active");
     });
   });
@@ -1474,7 +1478,49 @@
     return "";
   });
 
+  // ---- режим приставки (крупный интерфейс для Android-приставок/телевизоров) ----
+  // Включается автоматически на тач-устройствах или кнопкой «Режим приставки».
+  // Выбор запоминается в localStorage.
+  var TV_KEY = "medroster.tvMode";
+  var tvBtn = document.getElementById("tv-mode-btn");
+
+  function isTouchDevice() {
+    if (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) return true;
+    return ("ontouchstart" in window) || (navigator.maxTouchPoints > 0);
+  }
+
+  function applyTvMode(on) {
+    document.body.classList.toggle("tv-mode", !!on);
+    if (tvBtn) tvBtn.classList.toggle("active", !!on);
+    if (tvBtn) tvBtn.title = on
+      ? "Обычный (компактный) интерфейс"
+      : "Крупный интерфейс для приставки / телевизора";
+  }
+
+  function initTvMode() {
+    var stored = localStorage.getItem(TV_KEY);
+    if (stored !== null) {
+      // пользователь явно выбрал режим ранее
+      applyTvMode(stored === "1");
+      return;
+    }
+    // иначе — автоопределение по типу устройства
+    var auto = isTouchDevice();
+    applyTvMode(auto);
+    // авто-режим не закрепляем, чтобы на десктопе не залипал; запоминаем явный выбор
+    if (auto) localStorage.setItem(TV_KEY, "1");
+  }
+
+  if (tvBtn) {
+    tvBtn.addEventListener("click", function () {
+      var next = !document.body.classList.contains("tv-mode");
+      applyTvMode(next);
+      localStorage.setItem(TV_KEY, next ? "1" : "0");
+    });
+  }
+
   // ---- старт ----
+  initTvMode();
   loadCalendar(parseInt(document.getElementById("cal-year").value, 10) || 2026);
   refreshSaved();
   autoOpenSchedule();

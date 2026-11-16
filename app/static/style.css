@@ -29,6 +29,18 @@ body {
   line-height: 1.45;
 }
 
+/* Единый видимый фокус для клавиатурной навигации (доступность). */
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+button:focus-visible, .tab:focus-visible,
+input:focus-visible, select:focus-visible, textarea:focus-visible,
+summary:focus-visible, td[tabindex]:focus-visible, li[tabindex]:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
 /* ---------- Header ---------- */
 .topbar {
   background: var(--card);
@@ -118,8 +130,15 @@ select { max-width: 220px; }
   font-size: 13px;
   font-weight: 600;
 }
+.btn:hover { background: #f0f3f7; }
+.btn:active { background: #e6ebf1; }
 .btn.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
 .btn.primary:hover { background: var(--brand-dark); }
+.btn.primary:active { background: #123e80; }
+.btn.danger { color: var(--error-ink); border-color: #f1c7c7; }
+.btn.danger:hover { background: var(--error-bg); }
+.btn.danger:active { background: #f5d7d7; }
+.btn:disabled { opacity: .55; cursor: not-allowed; }
 
 .badge {
   background: var(--warn-bg);
@@ -286,9 +305,6 @@ label.chk { gap: 6px; white-space: nowrap; }
 label.chk input[type="checkbox"] { width: 15px; height: 15px; }
 
 .sep { width: 1px; height: 22px; background: var(--line); display: inline-block; }
-
-.btn.danger { color: var(--error-ink); border-color: #f1c7c7; }
-.btn.danger:hover { background: var(--error-bg); }
 
 .add-employee input[type="text"] { width: 180px; }
 .add-employee select { width: 92px; }
@@ -496,6 +512,25 @@ input[type="number"], input[type="file"], input[type="text"], select { padding: 
   #emp-table-wrap { max-height: calc(100vh - 220px); }
 }
 
+/* ---------- Тач-устройства (приставки, планшеты) ----------
+   Увеличиваем цели касания до рекомендованных ~44px и не показываем hover. */
+@media (pointer: coarse) {
+  .tab, .btn {
+    padding: 10px 16px;
+    min-height: 44px;
+  }
+  .tab, .btn { font-size: 14px; }
+  input[type="number"], input[type="text"], select {
+    padding: 10px 9px;
+    min-height: 40px;
+  }
+  .del-btn { min-width: 40px; min-height: 36px; font-size: 14px; }
+  /* на тач hover залипает после первого касания — отключаем */
+  .btn:hover, .btn.primary:hover, .btn.danger:hover,
+  td.editable:hover, td.meta:hover { outline: none; }
+  td.editable { cursor: default; }
+}
+
 /* ---------- Центр обновлений ---------- */
 .modal {
   position: fixed;
@@ -562,3 +597,97 @@ input[type="number"], input[type="file"], input[type="text"], select { padding: 
   color: var(--ink);
 }
 .cell-editor .toolbar { margin: 8px 0 0; justify-content: center; }
+
+/* На узких экранах редактор ячейки не вылезает за границы. */
+@media (max-width: 460px) {
+  .cell-editor { width: calc(100vw - 16px); left: 8px !important; }
+  .cell-editor input { font-size: 20px; }
+}
+
+/* ========================================================================== #
+ *  Режим приставки (tv-mode): крупный интерфейс для Android-приставок и
+ *  телевизоров. Включается автоматически на тач-устройствах или кнопкой
+ *  «Режим приставки». Увеличивает шрифты, кнопки, ячейки и поля ввода.
+ * ========================================================================== */
+body.tv-mode {
+  font-size: 18px;
+  line-height: 1.5;
+}
+body.tv-mode main { padding: 14px 16px 44px; }
+body.tv-mode .topbar { padding: 12px 18px; }
+body.tv-mode h1 { font-size: 24px; }
+body.tv-mode .brand-mark { width: 48px; height: 48px; font-size: 18px; }
+body.tv-mode .sub { display: block; font-size: 15px; }
+body.tv-mode .org-field { font-size: 15px; }
+body.tv-mode .org-field input { min-width: 320px; padding: 9px 12px; font-size: 16px; }
+body.tv-mode .tab,
+body.tv-mode .btn {
+  padding: 12px 20px;
+  font-size: 16px;
+  min-height: 48px;
+  border-radius: 10px;
+}
+body.tv-mode .tab { padding: 12px 18px; }
+body.tv-mode .badge { font-size: 14px; padding: 6px 12px; }
+body.tv-mode .card { padding: 14px 16px; margin-bottom: 14px; }
+body.tv-mode .card h2 { font-size: 18px; }
+body.tv-mode .card h3 { font-size: 16px; }
+body.tv-mode .hint { font-size: 14px; }
+body.tv-mode .toolbar { gap: 12px; }
+body.tv-mode .toolbar label { font-size: 15px; }
+body.tv-mode input[type="number"],
+body.tv-mode input[type="text"],
+body.tv-mode input[type="file"],
+body.tv-mode select,
+body.tv-mode textarea {
+  padding: 10px 12px;
+  font-size: 16px;
+  min-height: 44px;
+  border-radius: 8px;
+}
+body.tv-mode input[type="number"] { width: 110px; }
+body.tv-mode select { max-width: 300px; }
+body.tv-mode label.chk { font-size: 15px; }
+body.tv-mode label.chk input[type="checkbox"] { width: 22px; height: 22px; }
+body.tv-mode .del-btn { min-width: 44px; min-height: 40px; font-size: 16px; }
+body.tv-mode .collapsible > summary { font-size: 16px; }
+body.tv-mode .entry-help { font-size: 14px; }
+
+/* Таблица сотрудников: крупнее шрифт и ячейки. */
+body.tv-mode #emp-table-wrap table.grid { font-size: 14px; }
+body.tv-mode #emp-table-wrap table.grid th,
+body.tv-mode #emp-table-wrap table.grid td { height: 40px; padding: 6px 4px; }
+body.tv-mode #emp-table-wrap table.grid th.day { width: 36px; }
+body.tv-mode #emp-table-wrap table.grid th.day .dow { font-size: 12px; }
+body.tv-mode #emp-table-wrap table.grid th.day .dnum { font-size: 15px; }
+body.tv-mode #emp-table-wrap td.editable { font-size: 14px; }
+body.tv-mode #emp-table-wrap table.grid th:nth-child(1) { width: 190px; }
+body.tv-mode #emp-table-wrap table.grid th:nth-child(2) { width: 130px; }
+body.tv-mode #emp-table-wrap table.grid th:nth-child(3) { width: 60px; }
+body.tv-mode #emp-table-wrap table.grid th:nth-child(4) { width: 60px; }
+body.tv-mode #emp-table-wrap table.grid th.num { width: 60px; }
+body.tv-mode #emp-table-wrap table.grid th.del { width: 44px; }
+body.tv-mode #emp-table-wrap td:nth-child(2) { left: 190px; }
+body.tv-mode .weeknorm-tag { font-size: 13px; padding: 2px 8px; }
+body.tv-mode td.meta { cursor: pointer; }
+
+/* Сводка, конфликты, светофор — крупнее. */
+body.tv-mode .summary .stat .n { font-size: 28px; }
+body.tv-mode .summary .stat .l { font-size: 14px; }
+body.tv-mode .conflicts li { font-size: 15px; padding: 10px 14px; }
+body.tv-mode .status { font-size: 15px; }
+body.tv-mode .traffic { font-size: 16px; padding: 12px 16px; }
+body.tv-mode .cell-error { font-size: 14px; }
+
+/* Крупный редактор ячейки — ещё больше для тач-ввода. */
+body.tv-mode .cell-editor { width: 560px; }
+body.tv-mode .cell-editor-info { font-size: 16px; }
+body.tv-mode .cell-editor input { font-size: 32px; padding: 18px 14px; }
+
+/* Кнопка режима: подсветить активное состояние. */
+#tv-mode-btn.active {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+body.tv-mode #tv-mode-btn.active { background: var(--brand-dark); }

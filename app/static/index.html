@@ -24,18 +24,19 @@
       </div>
     </div>
     <div class="topbar-right">
-      <nav class="tabs" id="tabs">
-        <button class="tab" data-tab="calendar">Производственный календарь</button>
-        <button class="tab active" data-tab="graph">График</button>
+      <nav class="tabs" id="tabs" role="tablist" aria-label="Разделы">
+        <button class="tab" data-tab="calendar" role="tab" aria-selected="false" aria-controls="tab-calendar" id="tab-btn-calendar">Производственный календарь</button>
+        <button class="tab active" data-tab="graph" role="tab" aria-selected="true" aria-controls="tab-graph" id="tab-btn-graph">График</button>
       </nav>
       <button id="updates-open" class="btn" title="Проверить программу и необходимые компоненты">Обновления</button>
+      <button id="tv-mode-btn" class="btn" title="Крупный интерфейс для приставки / телевизора">Режим приставки</button>
       <button id="shutdown-btn" class="btn danger" title="Остановить сервис (завершить программу)">Выключить сервис</button>
     </div>
   </header>
 
   <main>
     <!-- ================= Календарь ================= -->
-    <section id="tab-calendar" class="panel">
+    <section id="tab-calendar" class="panel" role="tabpanel" aria-labelledby="tab-btn-calendar">
       <div class="toolbar">
         <label>Год
           <input type="number" id="cal-year" value="2026" min="1990" max="2050">
@@ -73,7 +74,7 @@
     </section>
 
     <!-- ================= График ================= -->
-    <section id="tab-graph" class="panel active">
+    <section id="tab-graph" class="panel active" role="tabpanel" aria-labelledby="tab-btn-graph">
       <details class="card collapsible setup-card">
         <summary>Источник данных и настройки месяца</summary>
         <p class="hint">Загрузите файл «.xls», создайте пустой график вручную или продолжите с сохранённого месяца.</p>
@@ -257,7 +258,7 @@
     </div>
   </div>
 
-  <footer class="footer">med-roster 0.8.0 · Python + FastAPI · работает на Windows 7 / 10 / 11 и Linux</footer>
+  <footer class="footer">med-roster 0.9.0 · Python + FastAPI · работает на Windows 7 / 10 / 11 и Linux</footer>
 
   <script src="/static/app.js"></script>
 </body>

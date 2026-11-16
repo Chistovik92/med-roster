@@ -33,11 +33,43 @@ def test_index_html_structure():
         assert needle in html, needle
 
 
+def test_index_html_tab_accessibility():
+    """Регрессия: вкладки размечены для доступности (role=tablist/tab/tabpanel)."""
+    html = read("app/static/index.html")
+    assert 'role="tablist"' in html
+    assert 'role="tab"' in html
+    assert 'aria-selected' in html
+    assert 'aria-controls="tab-graph"' in html
+    assert 'role="tabpanel"' in html
+    assert 'aria-labelledby="tab-btn-graph"' in html
+
+
 def test_style_css_compact():
     css = read("app/static/style.css")
     assert "table-layout: fixed" in css
     assert "max-height: calc(100vh" in css
     assert "position: sticky; left: 0" in css
+
+
+def test_style_css_accessibility_and_touch():
+    """Регрессия: видимый фокус (focus-visible) и тач-цели (pointer: coarse)."""
+    css = read("app/static/style.css")
+    assert ":focus-visible" in css
+    assert "@media (pointer: coarse)" in css
+    assert "min-height: 44px" in css
+
+
+def test_tv_mode_html_and_css():
+    """Регрессия: режим приставки — кнопка в HTML и крупный масштаб в CSS."""
+    html = read("app/static/index.html")
+    css = read("app/static/style.css")
+    js = read("app/static/app.js")
+    assert 'id="tv-mode-btn"' in html
+    assert "body.tv-mode" in css
+    assert "#tv-mode-btn.active" in css
+    assert "tv-mode" in js
+    assert "isTouchDevice" in js
+    assert "medroster.tvMode" in js
 
 
 def test_app_js_functions():
