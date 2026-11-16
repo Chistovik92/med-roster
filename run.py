@@ -22,10 +22,6 @@ import traceback
 import urllib.request
 import webbrowser
 
-import uvicorn
-
-from app.main import app
-
 HOST = "127.0.0.1"
 PORT = 25625
 
@@ -45,6 +41,17 @@ def _ensure_stdio() -> None:
         sys.stdout = open(os.devnull, "w", encoding="utf-8")
     if sys.stderr is None:
         sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
+
+def _startup_error_message(exc: BaseException) -> str:
+    """Сформировать сообщение, которое прямо называет причину сбоя запуска."""
+    reason = str(exc).strip() or "без текстового описания"
+    return (
+        "Не удалось запустить «МедГрафик: Поликлиника».\n\n"
+        "Причина: %s: %s\n\n"
+        "Журнал: %s\n"
+        "Python: %s"
+    ) % (type(exc).__name__, reason, _error_log_path(), sys.version.split()[0])
 
 
 def _show_error(message: str) -> None:
@@ -178,6 +185,11 @@ def main() -> None:
                 "Завершите процесс вручную (Диспетчер задач или stop.bat / "
                 "stop.sh) и запустите программу снова.")
             return
+    # Импорты выполняем внутри main(): ошибки зависимостей/статических файлов
+    # в портативной сборке тоже попадают в понятное диалоговое сообщение.
+    import uvicorn
+    from app.main import app
+
     threading.Thread(target=_open_browser, daemon=True).start()
     # log_level="warning" — меньше шума; на слабом железе меньше накладных расходов.
     uvicorn.run(app, host=HOST, port=PORT, log_level="warning")
@@ -188,12 +200,13 @@ if __name__ == "__main__":
         main()
     except SystemExit:
         raise
-    except Exception:
+    except Exception as exc:
         tb = traceback.format_exc()
         try:
             with open(_error_log_path(), "a", encoding="utf-8") as f:
                 f.write("\n==== %s ====\n%s\n" % (time.ctime(), tb))
         except Exception:
             pass
-        _show_error("Не удалось запустить сервер.\n\nПодробности: %s" % _error_log_path())
-        raise
+        _show_error(_startup_error_message(exc))
+        # Не показываем второй технический диалог PyInstaller с traceback.
+        raise SystemExit(1)

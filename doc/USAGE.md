@@ -28,6 +28,16 @@ calculate shift schedules and time sheets (OKUD 0504421 / T-13).
   needed at install time for dependencies).
 - **Fedora/Simply Linux:** `sudo rpm -i med-roster-<version>.x86_64.rpm`.
 
+**Linux — install or update directly from the repository with one command:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Chistovik92/med-roster/master/install.sh | bash
+```
+
+Then launch `med-roster` or use the application menu entry. The script downloads
+the code, creates a virtualenv and installs dependencies. If Python is missing,
+it can install the required system packages via `sudo` on supported distributions.
+
 ### Option B — run from source
 
 1. Clone the repository (or copy the project folder).
@@ -119,9 +129,15 @@ month is created automatically, so you can start entering data right away. To
 use another month or data source (`.xls` import, a saved month, generation),
 select it in the «Источник данных» card above.
 
+- **Compact view.** Data sources, summary, errors and tools are collapsible; the
+  grid uses the available window space. The month fits standard monitor widths;
+  when horizontal scrolling is still needed, names and job titles stay pinned.
 - **Day headings** show the weekday and date («Пн 1», «Вт 2»…). Weekends and
   public holidays have a grey background; shortened pre-holiday days have a
   green underline.
+- **Error location and reason.** Invalid cells are highlighted and the employee,
+  day and reason appear above the grid. Clicking an item in the errors/warnings
+  list jumps to the corresponding cell or row.
 - **Click** a day cell to edit it. Enter an interval like `8-15,48` or a status
   code (`В`, `ОТ`, `Б`, `У`).
 - **Hotkeys.** When a cell is selected but its input field is not open: **1** —
@@ -213,6 +229,8 @@ python tests/test_scheduler.py
 python tests/test_storage.py
 python tests/test_shutdown.py
 python tests/test_bulk_and_meta.py
+python tests/test_launcher.py
+python tests/test_ui.py
 ```
 
 ## 11. Stopping the service

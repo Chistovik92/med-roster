@@ -16,8 +16,10 @@
 
 ## Windows
 
-1. Установите Python **3.8** (для совместимости с Windows 7) и [NSIS](https://nsis.sourceforge.io/).
-2. Запустите `build_windows.bat` (или `build_windows.bat py -3.8`).
+1. Установите **32-разрядный Python 3.8.10** (для Windows 7 x86/x64) и
+   [NSIS](https://nsis.sourceforge.io/). Скрипт использует PyInstaller **4.10**:
+   более новые линейки официально рассчитаны на Windows 8+.
+2. Запустите `build_windows.bat` (или `build_windows.bat py -3.8-32`).
 3. Результат: `dist\MedGrafik\MedGrafik.exe` и
    `packaging\MedGrafik-Setup-<ver>.exe`.
 
@@ -26,6 +28,14 @@ Python. Установщик ставится в профиль пользова
 **без прав администратора** — это работает и на старых ПК.
 
 ## Linux
+
+Для установки без сборки пакетов используется корневой `install.sh`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Chistovik92/med-roster/master/install.sh | bash
+```
+
+Для сборки релизных пакетов:
 
 1. Установите `fpm` и `rpm` (см. `.github/workflows/release.yml`).
 2. Запустите `packaging/build_linux.sh`.

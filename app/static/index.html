@@ -69,8 +69,8 @@
 
     <!-- ================= График ================= -->
     <section id="tab-graph" class="panel active">
-      <div class="card">
-        <h2>Источник данных</h2>
+      <details class="card collapsible setup-card">
+        <summary>Источник данных и настройки месяца</summary>
         <p class="hint">Загрузите файл «.xls», создайте пустой график вручную или продолжите с сохранённого месяца.</p>
 
         <div class="src-grid">
@@ -114,12 +114,12 @@
           </div>
         </div>
 
-        <div id="import-status" class="status"></div>
-      </div>
+        <div id="import-status" class="status" role="status"></div>
+      </details>
 
       <div id="import-results" class="hidden">
-        <div class="card">
-          <h2>Сводка <span id="period-label" class="badge"></span></h2>
+        <details class="card collapsible">
+          <summary>Сводка и экспорт <span id="period-label" class="badge"></span></summary>
           <div id="import-summary" class="summary"></div>
           <div class="toolbar" id="export-toolbar" style="margin-bottom:0">
             <button id="save-month" class="btn primary">Сохранить месяц</button>
@@ -129,16 +129,21 @@
             <button id="export-okud" class="btn">Табель ОКУД 0504421</button>
             <button id="export-signoff" class="btn">График на подпись</button>
           </div>
-        </div>
+        </details>
 
-        <div class="card">
-          <h2>Ошибки и предупреждения</h2>
+        <details class="card collapsible" id="conflicts-card">
+          <summary>Ошибки и предупреждения <span id="conflicts-count" class="badge"></span></summary>
           <ul id="conflict-list" class="conflicts"></ul>
-        </div>
+        </details>
 
-        <div class="card">
-          <h2>Сотрудники</h2>
-          <p class="hint">Кликните по ячейке дня, чтобы изменить её. Enter — сохранить и перейти вниз, Tab — вправо, Esc — отмена. Когда ячейка просто выделена (без поля ввода), работают горячие клавиши: <b>1</b> — утренняя смена, <b>2</b> — вечерняя, <b>В</b> — выходной, <b>О</b> — отпуск, <b>Б</b> — больничный, <b>У</b> — учёба. Клик по Ф.И.О., должности, ставке или норме — изменить.</p>
+        <div class="card employees-card">
+          <div class="employee-heading">
+            <h2>График сотрудников</h2>
+            <details class="entry-help">
+              <summary>Подсказка и горячие клавиши</summary>
+              <p class="hint">Клик по ячейке — изменить; Enter — сохранить и перейти вниз; Tab — вправо; Esc — отмена. В выделенной ячейке: <b>1</b>/<b>2</b> — утренняя/вечерняя смена, <b>В</b> — выходной, <b>О</b> — отпуск, <b>Б</b> — больничный, <b>У</b> — учёба. Клик по Ф.И.О., должности, ставке или норме — изменить.</p>
+            </details>
+          </div>
           <div class="toolbar add-employee">
             <label>Ф.И.О. <input type="text" id="emp-name" placeholder="Иванова И.И." autocomplete="off"></label>
             <label>Должность <input type="text" id="emp-position" placeholder="вр.пед.уч." autocomplete="off"></label>
@@ -161,11 +166,12 @@
               <button id="emp-bulk-cancel" class="btn" type="button">Скрыть</button>
             </div>
           </div>
+          <div id="cell-error" class="cell-error hidden" role="alert" aria-live="polite"></div>
           <div class="table-scroll" id="emp-table-wrap"></div>
         </div>
 
-        <div class="card">
-          <h2>Инструменты</h2>
+        <details class="card collapsible">
+          <summary>Инструменты: автозаполнение и копирование</summary>
           <p class="hint">Автозаполнение смен и копирование графиков (синхронизация «врач↔медсестра»).</p>
           <div class="toolbar">
             <label>Сотрудник <select id="tool-emp"></select></label>
@@ -190,7 +196,7 @@
             <label>В <select id="tool-to"></select></label>
             <button id="tool-copy" class="btn">Скопировать график</button>
           </div>
-        </div>
+        </details>
 
         <div id="traffic-light" class="traffic">
           <span class="tl-dot" id="tl-dot"></span>
@@ -200,7 +206,7 @@
     </section>
   </main>
 
-  <footer class="footer">med-roster 0.5.0 · Python + FastAPI · работает на Windows 7 / 10 / 11 и Linux</footer>
+  <footer class="footer">med-roster 0.5.5 · Python + FastAPI · работает на Windows 7 / 10 / 11 и Linux</footer>
 
   <script src="/static/app.js"></script>
 </body>

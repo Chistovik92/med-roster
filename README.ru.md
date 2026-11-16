@@ -17,13 +17,23 @@
 
 | Система | Установщик |
 | --- | --- |
-| Windows 7 / 10 / 11 | `MedGrafik-Setup-<ver>.exe` (или переносимый `.zip`) |
+| Windows 7 / 10 / 11 (x86/x64) | `MedGrafik-Setup-<ver>.exe` (или переносимый `win32.zip`) |
 | Debian / Ubuntu | `med-roster_<ver>_amd64.deb` |
 | Fedora / Simply Linux и др. | `med-roster-<ver>.x86_64.rpm` |
 | Любой Linux | `med-roster-<ver>.tar.gz` (переносимая сборка) |
 
 Установщики собираются автоматически в GitHub Actions (см.
 `.github/workflows/release.yml` и каталог `packaging/`).
+
+### Linux — установка одной командой
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Chistovik92/med-roster/master/install.sh | bash
+```
+
+Установка выполняется в `~/.local/share/med-roster`, создаются virtualenv,
+ярлык меню и команда запуска `med-roster`. Повторный запуск той же команды
+обновляет программу; сохранённые месяцы не удаляются.
 
 ## Возможности
 
@@ -94,6 +104,7 @@ doc/
   ARCHITECTURE.md  # паспорт проекта (аналоги, нормы, архитектура, UX, roadmap)
 start.bat        # запуск на Windows
 start.sh         # запуск на Linux
+install.sh       # установка/обновление Linux одной командой
 requirements.txt
 CHANGELOG.md
 AGENTS.md        # память проекта (решения, формулы, данные)
@@ -122,6 +133,8 @@ python tests/test_scheduler.py
 python tests/test_storage.py
 python tests/test_shutdown.py
 python tests/test_bulk_and_meta.py
+python tests/test_launcher.py
+python tests/test_ui.py
 ```
 
 > Файлы `.xls` с персональными данными сотрудников в репозиторий **не** входят

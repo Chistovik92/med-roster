@@ -175,6 +175,46 @@
     return { err: err, warn: warn };
   }
 
+  function cellProblems(empIndex, day) {
+    var emp = empById(empIndex);
+    if (!emp) return { messages: [], severity: "" };
+    var messages = [];
+    var severity = "";
+    var cell = emp.days && emp.days[String(day)];
+    if (cell && cell.kind === "invalid") {
+      messages.push(cell.error || "некорректное значение ячейки");
+      severity = "error";
+    }
+    var key = normName(emp.name);
+    (currentData.conflicts || []).forEach(function (c) {
+      if (c.day === day && c.employee && normName(c.employee) === key) {
+        messages.push(c.message);
+        if (c.severity === "error") severity = "error";
+        else if (!severity) severity = "warning";
+      }
+    });
+    return { messages: messages, severity: severity };
+  }
+
+  function showTableError(message, severity) {
+    var box = document.getElementById("cell-error");
+    box.textContent = message || "";
+    box.className = "cell-error" + (message ? "" : " hidden") +
+      (severity ? " " + severity : "");
+  }
+
+  function showCellProblems(td) {
+    if (!td) { showTableError(""); return; }
+    var rowIndex = parseInt(td.dataset.row, 10);
+    var day = parseInt(td.dataset.day, 10);
+    var emp = empById(rowIndex);
+    var problems = cellProblems(rowIndex, day);
+    if (!problems.messages.length) { showTableError(""); return; }
+    var where = (emp ? emp.name : "Строка " + (rowIndex + 1)) +
+      ", день " + day;
+    showTableError(where + ": " + problems.messages.join("; "), problems.severity);
+  }
+
   function renderTrafficLight(data) {
     var errs = 0, warns = 0;
     data.conflicts.forEach(function (c) {
@@ -414,8 +454,31 @@
     stat(warns, "Предупреждений", "warn");
   }
 
+  function focusConflict(c) {
+    if (!currentData || !c.employee) return;
+    var key = normName(c.employee);
+    var emp = null;
+    currentData.employees.forEach(function (item) {
+      if (!emp && normName(item.name) === key) emp = item;
+    });
+    if (!emp) return;
+    if (c.day) {
+      var td = findCell(emp.index, c.day);
+      if (td) {
+        selectCell(td);
+        td.scrollIntoView({ block: "center", inline: "center" });
+        return;
+      }
+    }
+    var row = empTbody && empTbody.querySelector('tr[data-index="' + emp.index + '"]');
+    if (row) row.scrollIntoView({ block: "center" });
+  }
+
   function renderConflicts(conflicts) {
     var list = document.getElementById("conflict-list");
+    var errors = conflicts.filter(function (c) { return c.severity === "error"; }).length;
+    document.getElementById("conflicts-count").textContent = conflicts.length ?
+      errors + " ошибок / " + (conflicts.length - errors) + " предупреждений" : "нет";
     list.innerHTML = "";
     if (!conflicts.length) {
       list.appendChild(el("li", "ok", "Ошибок и предупреждений не найдено."));
@@ -428,6 +491,13 @@
       li.appendChild(document.createTextNode(
         (c.employee ? c.employee + (c.day ? " · день " + c.day : "") + " — " : "") +
         c.message));
+      li.dataset.conflict = "1";
+      li.tabIndex = 0;
+      li.title = "Нажмите, чтобы перейти к месту ошибки";
+      li.addEventListener("click", function (ev) { ev.stopPropagation(); focusConflict(c); });
+      li.addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter") { ev.preventDefault(); focusConflict(c); }
+      });
       list.appendChild(li);
     });
   }
@@ -448,9 +518,22 @@
   function buildEmployeeRow(emp, cf, dayCount) {
     var tr = el("tr");
     tr.dataset.index = emp.index;
+    if (cf.err > 0) tr.className = "has-error";
+    else if (cf.warn > 0) tr.className = "has-warning";
 
     var nameTd = el("td", "name meta");
     nameTd.dataset.field = "name";
+    nameTd.title = emp.name;
+    if (currentData && (cf.err > 0 || cf.warn > 0)) {
+      var key = normName(emp.name);
+      var rowMessages = [];
+      currentData.conflicts.forEach(function (c) {
+        if (c.employee && normName(c.employee) === key) {
+          rowMessages.push((c.day ? "День " + c.day + ": " : "") + c.message);
+        }
+      });
+      nameTd.title += "\n" + rowMessages.join("\n");
+    }
     var dot = el("span", "dot " + (cf.err > 0 ? "red" : (cf.warn > 0 ? "yellow" : "green")));
     nameTd.appendChild(dot);
     nameTd.appendChild(el("span", "meta-text", emp.name));
@@ -480,21 +563,27 @@
       if (!cell || cell.kind === "empty") { td.className = "editable cell-empty"; td.textContent = "·"; }
       else if (cell.kind === "shift") { td.className = "editable cell-shift"; td.textContent = cell.raw; }
       else if (cell.kind === "status") { td.className = "editable cell-status"; td.textContent = cell.raw; }
-      else if (cell.kind === "invalid") { td.className = "editable cell-invalid"; td.textContent = cell.raw || "!"; td.title = cell.error || cell.raw; }
+      else if (cell.kind === "invalid") { td.className = "editable cell-invalid"; td.textContent = cell.raw || "!"; }
       else { td.className = "editable cell-empty"; td.textContent = "·"; }
       if (dayOff(d2)) td.className += " col-off";
+      var problems = cellProblems(emp.index, d2);
+      if (problems.messages.length) {
+        td.className += problems.severity === "error" ? " cell-invalid" : " cell-warning";
+        td.title = "День " + d2 + ": " + problems.messages.join("; ");
+        td.setAttribute("aria-invalid", problems.severity === "error" ? "true" : "false");
+      }
       tr.appendChild(td);
     }
 
-    tr.appendChild(el("td", "num", fmt(emp.total_hours)));
+    tr.appendChild(el("td", "num hours-col", fmt(emp.total_hours)));
     if (!manualMode()) {
-      tr.appendChild(el("td", "num", emp.sum_col != null ? fmt(emp.sum_col) : ""));
+      tr.appendChild(el("td", "num sum-col", emp.sum_col != null ? fmt(emp.sum_col) : ""));
     }
     var normVal = emp.norm_col != null ? emp.norm_col
       : (emp.computed_norm != null ? emp.computed_norm : null);
-    tr.appendChild(el("td", "num", normVal != null ? fmt(normVal) : ""));
+    tr.appendChild(el("td", "num norm-col", normVal != null ? fmt(normVal) : ""));
     var dev = normVal != null ? (emp.total_hours - normVal) : null;
-    var devTd = el("td", "num", dev != null ? fmtSigned(dev) : "");
+    var devTd = el("td", "num dev-col", dev != null ? fmtSigned(dev) : "");
     if (dev != null) devTd.style.color = Math.abs(dev) > 0.5 ? "#d14343" : "#0e7a52";
     tr.appendChild(devTd);
 
@@ -515,6 +604,9 @@
   function updateRowDot(tr, cf) {
     var dot = tr.querySelector(".dot");
     if (dot) dot.className = "dot " + (cf.err > 0 ? "red" : (cf.warn > 0 ? "yellow" : "green"));
+    tr.classList.remove("has-error", "has-warning");
+    if (cf.err > 0) tr.classList.add("has-error");
+    else if (cf.warn > 0) tr.classList.add("has-warning");
   }
 
   function renderEmployees(data) {
@@ -538,11 +630,11 @@
       if (meta && meta.short) th.title = "Сокращённый (предпраздничный) день";
       hr.appendChild(th);
     }
-    hr.appendChild(el("th", "", "Часы"));
-    if (!manual) hr.appendChild(el("th", "", "Сумма"));
-    hr.appendChild(el("th", "", "Прим."));
-    hr.appendChild(el("th", "", "Δ"));
-    hr.appendChild(el("th", "", ""));
+    hr.appendChild(el("th", "num hours-col", "Часы"));
+    if (!manual) hr.appendChild(el("th", "num sum-col", "Сумма"));
+    hr.appendChild(el("th", "num norm-col", "Прим."));
+    hr.appendChild(el("th", "num dev-col", "Δ"));
+    hr.appendChild(el("th", "del", ""));
     thead.appendChild(hr);
     table.appendChild(thead);
 
@@ -552,6 +644,11 @@
       tbody.appendChild(buildEmployeeRow(emp, cf, data.day_count));
     });
     table.appendChild(tbody);
+    // 24 px на день: на экране от 1280 px обычно помещается весь месяц.
+    // На более узком экране остаётся горизонтальная прокрутка с закреплённым Ф.И.О.
+    var minWidth = 130 + 90 + 42 + 44 + data.day_count * 24 +
+      (manual ? 3 : 4) * 44 + 28;
+    table.style.minWidth = minWidth + "px";
     wrap.appendChild(table);
     empTbody = tbody;
   }
@@ -599,6 +696,9 @@
     if (selectedTd) {
       selectedTd.classList.add("selected");
       try { selectedTd.focus(); } catch (e) {}
+      showCellProblems(selectedTd);
+    } else {
+      showTableError("");
     }
   }
 
@@ -654,6 +754,7 @@
     if (selectedTd && !wrap.contains(ev.target)) {
       selectedTd.classList.remove("selected");
       selectedTd = null;
+      showTableError("");
     }
   });
 
@@ -803,10 +904,23 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ row_index: rowIndex, day: day, value: value })
     }).then(function (res) {
-      if (!res.ok) { alert("Ошибка сохранения: " + (res.data.error || "неизвестно")); fullRefresh(currentData); return; }
+      if (!res.ok) {
+        showTableError("День " + day + ": не сохранено — " +
+          (res.data.error || "неизвестная ошибка"), "error network");
+        fullRefresh(currentData);
+        return;
+      }
       applyServerResult(res.data, [rowIndex]);
-      if (navDir) goTo(navTarget(rowIndex, day, navDir));
-    }).catch(function (e) { alert("Ошибка сети: " + e); });
+      var savedTd = findCell(rowIndex, day);
+      var emp = empById(rowIndex);
+      var cell = emp && emp.days[String(day)];
+      var invalid = !!(cell && cell.kind === "invalid");
+      if (savedTd) selectCell(savedTd);
+      if (navDir && !invalid) goTo(navTarget(rowIndex, day, navDir));
+    }).catch(function (e) {
+      showTableError("День " + day + ": не сохранено, ошибка сети — " + e,
+        "error network");
+    });
   }
 
   function patchEmployee(empIndex, body) {
@@ -816,15 +930,29 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
     }).then(function (res) {
-      if (!res.ok) { alert("Ошибка: " + (res.data.error || "неизвестно")); renderEmployees(currentData); return; }
+      if (!res.ok) {
+        showTableError("Строка сотрудника: " + (res.data.error || "неизвестная ошибка"),
+          "error network");
+        renderEmployees(currentData);
+        return;
+      }
       fullRefresh(res.data);
-    }).catch(function (e) { alert("Ошибка сети: " + e); });
+    }).catch(function (e) {
+      showTableError("Строка сотрудника: ошибка сети — " + e, "error network");
+    });
   }
 
   function addEmployee() {
-    if (!currentSessionId) return;
+    if (!currentSessionId) {
+      showTableError("Сначала создайте или откройте график", "error");
+      return;
+    }
     var name = document.getElementById("emp-name").value.trim();
-    if (!name) { setStatus("Введите Ф.И.О.", "error"); return; }
+    if (!name) {
+      showTableError("Поле «Ф.И.О.»: введите сотрудника", "error");
+      document.getElementById("emp-name").focus();
+      return;
+    }
     var position = document.getElementById("emp-position").value.trim();
     var rate = parseFloat(document.getElementById("emp-rate").value);
     jsonFetch("/api/session/" + currentSessionId + "/employees", {
@@ -832,11 +960,17 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: name, position: position, rate: rate })
     }).then(function (res) {
-      if (!res.ok) { setStatus("Ошибка: " + (res.data.error || "неизвестно"), "error"); return; }
+      if (!res.ok) {
+        showTableError("Добавление сотрудника: " + (res.data.error || "неизвестная ошибка"), "error");
+        return;
+      }
       document.getElementById("emp-name").value = "";
       document.getElementById("emp-position").value = "";
+      showTableError("");
       fullRefresh(res.data);
-    }).catch(function (e) { setStatus("Ошибка сети: " + e, "error"); });
+    }).catch(function (e) {
+      showTableError("Добавление сотрудника: ошибка сети — " + e, "error network");
+    });
   }
 
   function deleteEmployee(empIndex) {
@@ -868,7 +1002,10 @@
     document.getElementById("emp-bulk-box").classList.add("hidden");
   });
   document.getElementById("emp-bulk-add").addEventListener("click", function () {
-    if (!currentSessionId) { setStatus("Сначала создайте или откройте график", "error"); return; }
+    if (!currentSessionId) {
+      showTableError("Сначала создайте или откройте график", "error");
+      return;
+    }
     var text = document.getElementById("emp-bulk-text").value;
     var employees = [];
     text.split(/\r?\n/).forEach(function (line) {
@@ -885,18 +1022,26 @@
       }
       employees.push({ name: name, position: position, rate: rate });
     });
-    if (!employees.length) { setStatus("Нет строк для добавления (формат: Ф.И.О.; должность; ставка)", "error"); return; }
+    if (!employees.length) {
+      showTableError("Поле списка: нет строк для добавления (формат: Ф.И.О.; должность; ставка)", "error");
+      return;
+    }
     jsonFetch("/api/session/" + currentSessionId + "/employees/bulk", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ employees: employees })
     }).then(function (res) {
-      if (!res.ok) { setStatus("Ошибка: " + (res.data.error || "неизвестно"), "error"); return; }
+      if (!res.ok) {
+        showTableError("Добавление списком: " + (res.data.error || "неизвестная ошибка"), "error");
+        return;
+      }
       document.getElementById("emp-bulk-text").value = "";
       document.getElementById("emp-bulk-box").classList.add("hidden");
-      setStatus("Добавлено сотрудников: " + employees.length, "ok");
+      showTableError("Добавлено сотрудников: " + employees.length, "ok");
       fullRefresh(res.data);
-    }).catch(function (e) { setStatus("Ошибка сети: " + e, "error"); });
+    }).catch(function (e) {
+      showTableError("Добавление списком: ошибка сети — " + e, "error network");
+    });
   });
 
   // ---- инструменты: автозаполнение и копирование ----
@@ -907,9 +1052,15 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
     }).then(function (res) {
-      if (!res.ok) { alert("Ошибка: " + (res.data.error || "неизвестно")); return; }
+      if (!res.ok) {
+        showTableError("Операция не выполнена: " + (res.data.error || "неизвестная ошибка"),
+          "error network");
+        return;
+      }
       applyServerResult(res.data, changedIndices || []);
-    }).catch(function (e) { alert("Ошибка сети: " + e); });
+    }).catch(function (e) {
+      showTableError("Операция не выполнена, ошибка сети: " + e, "error network");
+    });
   }
 
   // ---- типовая смена: подставить в поле ввода ----

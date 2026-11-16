@@ -5,7 +5,8 @@ rem
 rem  Результат: dist\MedGrafik\MedGrafik.exe            (автономная папка)
 rem             packaging\MedGrafik-Setup-<VERSION>.exe  (установщик NSIS)
 rem
-rem  Требования: Python 3.8+ (для Windows 7 — именно 3.8), NSIS (makensis).
+rem  Требования: Python 3.8.10 x86 (для Windows 7), PyInstaller 4.10, NSIS.
+rem  32-разрядная сборка подходит для 32- и 64-разрядных Windows 7/10/11.
 rem
 rem  Использование:
 rem      build_windows.bat            — сборка с python из PATH
@@ -15,13 +16,14 @@ setlocal
 cd /d "%~dp0.."
 
 set "PY=python"
-if not "%~1"=="" set "PY=%~1"
+if not "%~1"=="" set "PY=%*"
 
-where %PY% >nul 2>&1
+%PY% --version >nul 2>&1
 if errorlevel 1 (
     echo [ОШИБКА] Интерпретатор "%PY%" не найден.
     exit /b 1
 )
+%PY% -c "import struct,sys; assert sys.version_info[:2] == (3,8) and struct.calcsize('P')*8 == 32, 'Для Windows 7 нужен Python 3.8.10 x86'" || exit /b 1
 
 rem --- версия из app/__init__.py ---
 for /f "delims=" %%v in ('%PY% packaging\get_version.py') do set "VERSION=%%v"
@@ -41,7 +43,7 @@ call build\venv\Scripts\activate.bat
 
 echo [2/4] Установка зависимостей...
 python -m pip install --upgrade pip >nul
-python -m pip install -r requirements.txt pyinstaller || exit /b 1
+python -m pip install -r requirements.txt pyinstaller==4.10 || exit /b 1
 
 echo [3/4] Сборка автономного приложения (PyInstaller)...
 python -m PyInstaller --noconfirm --clean packaging\medgrafik.spec || exit /b 1

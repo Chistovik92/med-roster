@@ -16,13 +16,23 @@ Prebuilt installers are attached to each [GitHub release](https://github.com/Chi
 
 | System | Installer |
 | --- | --- |
-| Windows 7 / 10 / 11 | `MedGrafik-Setup-<ver>.exe` (or portable `.zip`) |
+| Windows 7 / 10 / 11 (x86/x64) | `MedGrafik-Setup-<ver>.exe` (or portable `win32.zip`) |
 | Debian / Ubuntu | `med-roster_<ver>_amd64.deb` |
 | Fedora / Simply Linux and others | `med-roster-<ver>.x86_64.rpm` |
 | Any Linux | `med-roster-<ver>.tar.gz` (portable) |
 
 Installers are built automatically by GitHub Actions (see `.github/workflows/release.yml`
 and `packaging/`).
+
+### Linux — one-command installation
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Chistovik92/med-roster/master/install.sh | bash
+```
+
+The installer uses `~/.local/share/med-roster`, creates a virtualenv, an application
+menu entry and the `med-roster` launch command. Run the same command again to update;
+saved months are preserved.
 
 ## Features
 
@@ -95,6 +105,7 @@ doc/
   ARCHITECTURE.md  # project passport (references, norms, architecture, UX, roadmap)
 start.bat        # Windows launcher
 start.sh         # Linux launcher
+install.sh       # one-command Linux installer/updater
 requirements.txt
 CHANGELOG.md
 AGENTS.md        # project memory (decisions, formulas, data)
@@ -123,6 +134,8 @@ python tests/test_scheduler.py
 python tests/test_storage.py
 python tests/test_shutdown.py
 python tests/test_bulk_and_meta.py
+python tests/test_launcher.py
+python tests/test_ui.py
 ```
 
 > `.xls` files containing personal data of employees are **not** committed to the
