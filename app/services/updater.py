@@ -18,6 +18,7 @@ from packaging.specifiers import SpecifierSet
 from packaging.version import InvalidVersion, Version
 
 from app import __version__
+from app.core.win7_prereq import has_kb2533623, _is_windows7
 
 GITHUB_RELEASE_API = "https://api.github.com/repos/Chistovik92/med-roster/releases/latest"
 DEPENDENCIES = (
@@ -116,6 +117,8 @@ def maintenance_status() -> Dict:
                            (not frozen and sys.platform.startswith("linux")),
         "can_update_dependencies": not frozen,
         "python": platform.python_version(),
+        "is_windows7": _is_windows7(),
+        "kb2533623": has_kb2533623(),
     }
 
 

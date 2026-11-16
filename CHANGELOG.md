@@ -4,6 +4,25 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версионирование — [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [0.6.2] — 2026-11-16
+
+### Исправлено
+- **Windows 7 SP1: `DLL load failed while importing _socket` (ERROR_INVALID_PARAMETER).**
+  Причина — отсутствие **KB2533623**: без него `LoadLibraryEx` не поддерживает
+  флаги `LOAD_LIBRARY_SEARCH_*`, которые использует Python при загрузке DLL.
+- KB2533623 (**x86 и x64**, подпись Microsoft, проверка SHA256) теперь включён
+  **внутрь portable ZIP и установщика** — скачивать с серверов Microsoft не нужно.
+- `run.py` перед запуском проверяет наличие KB (`SetDefaultDllDirectories`);
+  при отсутствии — автоматическая тихая установка через `wusa.exe`.
+  При невозможности установки показывается понятное сообщение с инструкцией.
+- Центр «Обновления» на Windows 7 показывает статус KB2533623.
+- CI проверяет наличие обоих MSU в release ZIP.
+
+### Добавлено
+- `app/core/win7_prereq.py` — проверка и установка KB2533623.
+- `packaging/windows/Windows6.1-KB2533623-{x86,x64}.msu` — официальные пакеты.
+- Тест `test_win7_prereq.py` (SHA256, наличие в spec/workflow).
+
 ## [0.6.1] — 2026-11-16
 
 ### Добавлено

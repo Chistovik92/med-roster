@@ -279,6 +279,19 @@ M_инд = M_баз − (W_нед / 5 × N_неявок × rate)
   - Source: обновление зависимостей только через `requirements.txt`.
   - API: `GET /api/maintenance`, `POST /api/maintenance/app`,
     `POST /api/maintenance/dependencies`. Тест `test_updater.py` без сети.
+- **Релиз 0.6.2 (KB2533623 внутри пакета):**
+  - **Windows 7 SP1 `_socket`:** `LoadLibraryEx` с флагами `LOAD_LIBRARY_SEARCH_*`
+    требует **KB2533623**; без него — `ERROR_INVALID_PARAMETER`. Python 3.8.10 x86,
+    UCRT, PyInstaller 4.10 — уже в 0.5.5/0.6.0, этого было недостаточно.
+  - `packaging/windows/Windows6.1-KB2533623-{x86,x64}.msu` — официальные MSU
+    (подпись Microsoft, SHA256 зафиксирован), включаются в ZIP и установщик.
+    Скачивание с серверов MS не требуется.
+  - `app/core/win7_prereq.py`: `has_kb2533623()` (проверка `SetDefaultDllDirectories`),
+    `ensure_kb2533623()` (wusa.exe, проверка SHA256), `check_and_prompt()` (GUI).
+  - `run.py` вызывает `check_and_prompt()` до запуска сервера.
+  - Центр обновлений показывает статус KB на Windows 7.
+  - CI проверяет наличие обоих MSU в ZIP; `test_win7_prereq.py` проверяет SHA256.
+  - 16 автономных тестов, `node --check`, YAML, `git diff --check` — зелёные.
 
 ## 11. Ближайшие действия
 
@@ -304,4 +317,5 @@ M_инд = M_баз − (W_нед / 5 × N_неявок × rate)
     Windows 7 + релиз 0.6.0~~ — ГОТОВО.
 16. ~~Центр обновлений (программа, Windows portable, Linux, компоненты) +
     релиз 0.6.1~~ — ГОТОВО.
-17. **Дальнейшее (опционально):** кастомная `.ico` для Windows-установщика.
+17. ~~KB2533623 внутри portable/установщика для Windows 7 + релиз 0.6.2~~ — ГОТОВО.
+18. **Дальнейшее (опционально):** кастомная `.ico` для Windows-установщика.

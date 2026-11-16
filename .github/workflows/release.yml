@@ -54,7 +54,7 @@ jobs:
       - name: Verify Windows 7 runtime in portable zip
         shell: pwsh
         run: |
-          python -c "import glob,zipfile; p=glob.glob('MedGrafik-portable-*.zip')[0]; n=zipfile.ZipFile(p).namelist(); assert 'ucrtbase.dll' in n; assert '_socket.pyd' in n; assert any(x.startswith('api-ms-win-crt-') for x in n); print('UCRT + _socket included:', p)"
+          python -c "import glob,zipfile; p=glob.glob('MedGrafik-portable-*.zip')[0]; n=zipfile.ZipFile(p).namelist(); assert 'ucrtbase.dll' in n; assert '_socket.pyd' in n; assert 'Windows6.1-KB2533623-x86.msu' in n; assert 'Windows6.1-KB2533623-x64.msu' in n; assert any(x.startswith('api-ms-win-crt-') for x in n); print('UCRT + KB2533623 + _socket included:', p)"
 
       - uses: actions/upload-artifact@v4
         with:

@@ -1141,6 +1141,13 @@
     row.appendChild(el("strong", app.available ? "available" : "",
       app.current + " → " + app.latest + (app.available ? " · доступно обновление" : "")));
     appBox.appendChild(row);
+    if (data.is_windows7) {
+      var kbRow = el("div", "update-row");
+      kbRow.appendChild(el("span", "", "Системное обновление KB2533623"));
+      kbRow.appendChild(el("strong", data.kb2533623 ? "" : "available",
+        data.kb2533623 ? "установлено" : "не обнаружено — установится при запуске"));
+      appBox.appendChild(kbRow);
+    }
     if (app.error) appBox.appendChild(el("div", "update-error", "Проверка GitHub: " + app.error));
 
     var install = document.getElementById("updates-install");

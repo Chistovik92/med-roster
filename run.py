@@ -173,6 +173,8 @@ def _confirm_stop() -> bool:
 
 def main() -> None:
     _ensure_stdio()
+    from app.core.win7_prereq import check_and_prompt
+    check_and_prompt()
     if _check_existing_instance(HOST, PORT):
         # Уже запущена прежняя версия — предлагаем остановить её, чтобы новая
         # могла занять порт 25625.

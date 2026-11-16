@@ -41,6 +41,11 @@ if os.name == "nt":
 datas = []
 # Статические файлы фронтенда (index.html, app.js, style.css).
 datas += [(os.path.join(ROOT, "app", "static"), "app/static")]
+
+# KB2533623 (x86 + x64) — обязательное системное обновление для LoadLibraryEx
+# с флагами LOAD_LIBRARY_SEARCH_* на Windows 7. Поставляем внутри пакета.
+for _msu in ("Windows6.1-KB2533623-x86.msu", "Windows6.1-KB2533623-x64.msu"):
+    datas += [(os.path.join(ROOT, "packaging", "windows", _msu), ".")]
 for _pkg in ("fastapi", "starlette", "uvicorn"):
     try:
         datas += collect_data_files(_pkg)
