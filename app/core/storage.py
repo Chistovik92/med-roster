@@ -13,6 +13,11 @@
 Данные хранятся как JSON-блоб (результат ``serialize_result`` из
 ``app.services.xls_importer``), поэтому восстановление идёт через
 ``deserialize_result``.
+
+Кроме сохранённых месяцев БД хранит (с 0.10.0) интеграционные таблицы:
+``tenants`` (клиники/МИС), ``api_keys`` (API-ключи, только SHA-256 хэши) и
+``api_audit_log`` (аудит запросов) — см. ``app/core/api_auth.py`` и
+``app/core/audit.py``.
 """
 from __future__ import annotations
 
@@ -62,25 +67,97 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
-def init_db() -> None:
-    """Создать таблицу, если её ещё нет (идемпотентно, с миграциями)."""
-    with _connect() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS saved_months (
-                id       INTEGER PRIMARY KEY AUTOINCREMENT,
-                year     INTEGER NOT NULL,
-                month    INTEGER NOT NULL,
-                org      TEXT NOT NULL DEFAULT '',
-                source   TEXT NOT NULL DEFAULT '',
-                data     TEXT NOT NULL,
-                saved_at REAL NOT NULL
-            )
-            """
+def _ensure_schema(conn: sqlite3.Connection) -> None:
+    """Создать все таблицы, если их ещё нет (идемпотентно, с миграциями).
+
+    Таблицы:
+      * ``saved_months`` — сохранённые месяцы (JSON-блоб графика);
+      * ``tenants``      — тенанты (клиники/МИС) для API-ключей;
+      * ``api_keys``     — API-ключи (SHA-256 хэш + префикс, без секретов);
+      * ``api_audit_log``— аудит HTTP-запросов к API.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS saved_months (
+            id       INTEGER PRIMARY KEY AUTOINCREMENT,
+            year     INTEGER NOT NULL,
+            month    INTEGER NOT NULL,
+            org      TEXT NOT NULL DEFAULT '',
+            source   TEXT NOT NULL DEFAULT '',
+            data     TEXT NOT NULL,
+            saved_at REAL NOT NULL
         )
-        cols = [r[1] for r in conn.execute("PRAGMA table_info(saved_months)").fetchall()]
-        if "title" not in cols:
-            conn.execute("ALTER TABLE saved_months ADD COLUMN title TEXT NOT NULL DEFAULT ''")
+        """
+    )
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(saved_months)").fetchall()]
+    if "title" not in cols:
+        conn.execute("ALTER TABLE saved_months ADD COLUMN title TEXT NOT NULL DEFAULT ''")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tenants (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            name       TEXT NOT NULL UNIQUE,
+            created_at REAL NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS api_keys (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id     INTEGER NOT NULL,
+            key_hash      TEXT NOT NULL UNIQUE,
+            key_prefix    TEXT NOT NULL,
+            label         TEXT NOT NULL DEFAULT '',
+            is_active     INTEGER NOT NULL DEFAULT 1,
+            created_at    REAL NOT NULL,
+            last_used_at  REAL,
+            request_count INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS api_audit_log (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts          REAL NOT NULL,
+            method      TEXT NOT NULL,
+            path        TEXT NOT NULL,
+            status      INTEGER NOT NULL,
+            client_ip   TEXT,
+            api_key_id  INTEGER,
+            tenant      TEXT,
+            auth_status TEXT NOT NULL,
+            duration_ms REAL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_api_audit_log_ts ON api_audit_log(ts)")
+
+
+def init_db() -> None:
+    """Создать таблицы, если их ещё нет (идемпотентно, с миграциями)."""
+    with _connect() as conn:
+        _ensure_schema(conn)
+
+
+def get_connection() -> sqlite3.Connection:
+    """Открыть соединение с гарантированно созданной схемой.
+
+    Для фонового потока аудита и модулей api_auth/audit. Соединение нужно
+    закрыть вызывающим кодом. Каталог данных читается при каждом вызове
+    (``MEDROSTER_DATA_DIR``), поэтому смена env-переменной действует сразу —
+    это используется тестами.
+    """
+    conn = _connect()
+    try:
+        _ensure_schema(conn)
+    except Exception:
+        conn.close()
+        raise
+    return conn
 
 
 def save_month(year: int, month: int, org: str, payload: Dict,

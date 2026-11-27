@@ -328,6 +328,42 @@ M_инд = M_баз − (W_нед / 5 × N_неявок × rate)
   - Регрессии в `test_ui.py` (доступность + tv-mode); HTTP e2e-приёмка:
     schedule → bulk → cell → 5 экспортов (CSV/Т-13/ОКУД/подпись/XLS) → draft.
   - 91 тест зелёный, `node --check` чистый.
+- **Релиз 0.10.0 (интеграционный слой API для МИС):**
+  - Контракт `/api/v1`: все эндпоинты доступны с префиксом `/api/v1`;
+    OpenAPI-схема `/api/openapi.json` (только v1), Swagger `/api/docs`,
+    ReDoc `/api/redoc`. Прежние пути `/api/...` не изменились (в схему
+    не входят). Один роутер подключён дважды (`include_router` с разными
+    префиксами).
+  - API-ключи (`X-API-Key`): `mrk_`+40 hex, в БД только SHA-256;
+    один ключ = один тенант (клиника/МИС). Управление — только локально
+    или по `X-Admin-Token`: `GET/POST /api/keys`, `DELETE /api/keys/{id}`
+    (отзыв), `POST /api/keys/{id}/activate`, `GET /api/keys/tenants`.
+    Пока ключей нет — открытый режим (обратная совместимость); как только
+    выпущен хоть один — внешние анонимные запросы получают 401.
+    Локальный UI (127.0.0.1) работает без ключа всегда.
+  - Rate limiting: 70/мин обычные, 10/мин «тяжёлые» (импорт/экспорт),
+    раздельные счётчики (субъект:ключ или IP + суффикс `:heavy`);
+    429 + `Retry-After`; локальный UI без лимитов. Фиксированное окно,
+    `app/core/rate_limiter.py`.
+  - Аудит всех запросов к `/api/*` (включая 401/403/429): время, метод,
+    путь, статус, IP, длительность, auth_status и тенант. Очередь +
+    фоновый поток (`app/core/audit.py`), чтение `GET /api/audit`,
+    сводка `GET /api/audit/stats`, очистка `DELETE /api/audit`.
+    Ретеншн 90 дней; статистика ключей (request_count/last_used_at).
+  - CORS: `MEDROSTER_CORS_ORIGINS` (по умолчанию `*`).
+  - Конфигурация: `app/core/config.py` — `MEDROSTER_RATE_LIMIT`,
+    `MEDROSTER_HEAVY_RATE_LIMIT`, `MEDROSTER_RATE_LIMIT_WINDOW`,
+    `MEDROSTER_REQUIRE_API_KEY`, `MEDROSTER_TRUST_PROXY`,
+    `MEDROSTER_ADMIN_TOKEN`, `MEDROSTER_AUDIT_ENABLED`,
+    `MEDROSTER_AUDIT_RETENTION_DAYS`.
+  - Таблицы `tenants`/`api_keys`/`api_audit_log` в `med-roster.db`
+    (`storage._ensure_schema`, `get_connection`).
+  - Middleware-цепочка (порядок add_middleware, последний = внешний):
+    CORS → Аудит → Авторизация → RateLimit → роуты; результат авторизации
+    передаётся через `request.scope["mrauth"]`.
+  - Новые тесты: `test_api_auth.py` (19), `test_rate_limit.py` (13),
+    `test_audit_log.py` (12), обновлён `test_shutdown.py` (3).
+    Всего 133 теста, все зелёные. `API_INTEGRATION.md` переписан (раздел 1a).
 
 ## 11. Ближайшие действия
 
@@ -363,3 +399,5 @@ M_инд = M_баз − (W_нед / 5 × N_неявок × rate)
     релиз 0.8.0~~ — ГОТОВО.
 21. ~~**0.9.0 (UI/приставочный режим, этапы 4–6):** аудит/полировка UI, режим для
     Android-приставок (тач-навигация, крупные цели), финальная приёмка.~~ — ГОТОВО.
+22. ~~**0.10.0 (Фаза 1 интеграции с МИС):** `/api/v1` + OpenAPI, API-ключи
+    с тенантами, rate limiting, аудит запросов, CORS, env-конфигурация.~~ — ГОТОВО.

@@ -66,6 +66,11 @@ saved months are preserved.
   import an external database.
 - **Export**: corrected schedule (XLS and CSV) and printable forms — T-13, OKUD 0504421,
   schedule for approval/signature.
+- **MIS integration (REST API)**: versioned `/api/v1` contract with an OpenAPI
+  schema (`/api/openapi.json`), API-key authorization for external callers
+  (`X-API-Key`, per-clinic tenants), rate limiting (70/min, heavy 10/min),
+  request auditing and CORS. The local UI keeps working without a key.
+  See `API_INTEGRATION.md` (in Russian) for details.
 
 ## Requirements
 

@@ -8,6 +8,18 @@
   * GET  /api/calendar/{year} — производственный календарь и нормы на год;
   * POST /api/import          — загрузка .xls → разбор + валидация (5 типов).
 
+Интеграционный слой (с 0.10.0):
+  * те же роуты доступны с префиксом ``/api/v1`` (контракт для МИС;
+    OpenAPI-схема — ``/api/openapi.json``, Swagger UI — ``/api/docs``);
+  * авторизация внешних запросов по API-ключу (``X-API-Key``), см.
+    ``app/core/api_auth.py``;
+  * ограничение частоты запросов (``app/core/rate_limiter.py``);
+  * аудит всех запросов к API (``app/core/audit.py``);
+  * CORS (``MEDROSTER_CORS_ORIGINS``), см. ``app/core/config.py``.
+
+Локальные запросы (UI с того же компьютера) работают без ключа и лимитов,
+как и раньше: обратная совместимость гарантирована.
+
 Запуск: ``uvicorn app.main:app`` или через start.bat / start.sh.
 """
 from __future__ import annotations
@@ -18,12 +30,17 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, File, Form, UploadFile, Body
+from fastapi import FastAPI, File, Form, UploadFile, Body, APIRouter, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app import __version__
-from app.core import storage
+from app.core import storage, config
+from app.core import api_auth
+from app.core.audit import AuditLog
+from app.core.rate_limiter import RateLimiter
 from app.core.calendar_rf import get_year_calendar, WEEKDAY_RU
 from app.core.constants import VALID_WEEK_NORMS, DEFAULT_ORG
 from app.services.autocorrect import autocorrect
@@ -42,7 +59,19 @@ from app.services.xls_importer import (
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
-app = FastAPI(title="МедГрафик: Поликлиника", version=__version__)
+# Один роутер подключается дважды:
+#   * с префиксом /api/v1 — контракт для МИС (попадает в OpenAPI-схему);
+#   * с префиксом /api    — прежние пути для UI и обратной совместимости
+#     (include_in_schema=False, чтобы схема описывала только /api/v1).
+router = APIRouter()
+
+app = FastAPI(
+    title="МедГрафик: Поликлиника",
+    version=__version__,
+    openapi_url="/api/openapi.json",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+)
 
 # In-memory хранилище сессий импорта: session_id -> dict(result, conflicts, at).
 # Хранит только разобранные данные в памяти процесса (не персональные файлы).
@@ -59,6 +88,250 @@ _SESSION_TTL = 30 * 60
 # в формате .xls весит десятки КБ; лимит защищает от случайной загрузки гиганта
 # и от исчерпания памяти на слабом железе (2 ГБ).
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 МБ
+
+
+# --------------------------------------------------------------------------- #
+#  Интеграционный слой: аудит, авторизация, rate limit, CORS
+# --------------------------------------------------------------------------- #
+audit_log = AuditLog(flush_interval=2.0, batch=50)
+rate_limiter = RateLimiter()
+audit_log.set_rate_limiter(rate_limiter)
+
+_LOCAL_IPS = {"127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost"}
+
+# Эндпоинты, доступные только локальному администратору (или по X-Admin-Token):
+# остановка сервера, обновление приложения/зависимостей, управление ключами
+# и чтение/очистка аудита. Проверяется по нормализованному пути без префикса.
+_LOCAL_ONLY_PATHS = ("/shutdown",)
+_LOCAL_ONLY_PREFIXES = ("/keys", "/audit", "/maintenance/app",
+                        "/maintenance/dependencies")
+
+
+def _client_ip(request: Request) -> str:
+    """IP клиента (с учётом reverse proxy, если включён MEDROSTER_TRUST_PROXY)."""
+    if config.TRUST_PROXY:
+        forwarded = request.headers.get("x-forwarded-for", "")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+    client = request.client
+    return (client.host if client else "") or ""
+
+
+def _is_local(ip: str) -> bool:
+    return ip in _LOCAL_IPS
+
+
+def _normalized_api_path(path: str) -> str:
+    """Путь без префикса /api или /api/v1 (для проверки локальных эндпоинтов)."""
+    if path.startswith("/api/v1"):
+        return path[len("/api/v1"):]
+    if path.startswith("/api"):
+        return path[len("/api"):]
+    return path
+
+
+def _is_local_only(path: str) -> bool:
+    p = _normalized_api_path(path)
+    if p in _LOCAL_ONLY_PATHS:
+        return True
+    for prefix in _LOCAL_ONLY_PREFIXES:
+        if p == prefix or p.startswith(prefix + "/"):
+            return True
+    return False
+
+
+def _admin_token_ok(request: Request) -> bool:
+    """Совпал ли заголовок X-Admin-Token с MEDROSTER_ADMIN_TOKEN."""
+    token = config.ADMIN_TOKEN
+    return bool(token) and request.headers.get("x-admin-token", "") == token
+
+
+def _is_admin_request(request: Request, local: bool) -> bool:
+    """Локальный клиент ИЛИ совпавший X-Admin-Token (MEDROSTER_ADMIN_TOKEN)."""
+    if local:
+        return True
+    return _admin_token_ok(request)
+
+
+def _is_heavy(path: str, method: str) -> bool:
+    """«Тяжёлые» запросы: импорт .xls/.db и все экспорты (отдельный лимит)."""
+    p = path.lower()
+    if "/export/" in p:
+        return True
+    if method == "POST" and p.endswith("/import"):
+        return True
+    return False
+
+
+class AuditMiddleware(BaseHTTPMiddleware):
+    """Аудит всех запросов к /api/*: время, метод, путь, статус, IP, ключ, результат.
+
+    Работает снаружи авторизации, чтобы в журнал попадали и отклонённые
+    запросы (401 неверный ключ, 429 превышен лимит, 403 доступ запрещён).
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        start = time.time()
+        try:
+            response = await call_next(request)
+        except Exception:
+            if request.url.path.startswith("/api"):
+                info = request.scope.get("mrauth", {})
+                audit_log.log({
+                    "ts": time.time(),
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status": 500,
+                    "client_ip": _client_ip(request),
+                    "api_key_id": info.get("api_key_id"),
+                    "tenant": info.get("tenant"),
+                    "auth_status": info.get("status", "anonymous"),
+                    "duration_ms": round((time.time() - start) * 1000.0, 1),
+                })
+            raise
+        if request.url.path.startswith("/api"):
+            info = request.scope.get("mrauth", {})
+            audit_log.log({
+                "ts": time.time(),
+                "method": request.method,
+                "path": request.url.path,
+                "status": response.status_code,
+                "client_ip": _client_ip(request),
+                "api_key_id": info.get("api_key_id"),
+                "tenant": info.get("tenant"),
+                "auth_status": info.get("status", "anonymous"),
+                "duration_ms": round((time.time() - start) * 1000.0, 1),
+            })
+        return response
+
+
+class AuthMiddleware(BaseHTTPMiddleware):
+    """Авторизация: X-API-Key для внешних клиентов; локальный UI — без ключа.
+
+    Результат кладётся в ``scope["mrauth"]`` (доступен аудиту и rate limit):
+      * authorized         — валидный ключ (api_key_id, tenant заполнены);
+      * authorized_admin   — удалённый запрос с верным X-Admin-Token;
+      * anonymous_local    — локальный запрос без ключа (UI, как раньше);
+      * anonymous          — запрос без ключа при «открытом» режиме (ключей нет);
+      * rejected_bad_key   — неверный/отозванный ключ → 401;
+      * rejected_no_key    — внешний запрос без ключа при наличии ключей → 401;
+      * forbidden_remote   — локальный эндпоинт с внешнего клиента → 403;
+      * rate_limited       — 429 от RateLimitMiddleware.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        # scope общий для всей цепочки middleware: наружные слои прочитают
+        # результат авторизации после обработки запроса.
+        info: Dict[str, Any] = {"status": "anonymous_local"}
+        request.scope["mrauth"] = info
+
+        if not path.startswith("/api"):
+            return await call_next(request)
+        if request.method == "OPTIONS":
+            # CORS-preflight обрабатывает CORSMiddleware снаружи; OPTIONS
+            # сюда попасть не должен, но авторизацию на всякий случай не
+            # проверяем.
+            info["status"] = "options"
+            return await call_next(request)
+
+        ip = _client_ip(request)
+        local = _is_local(ip)
+        key = request.headers.get("x-api-key", "").strip()
+
+        if key:
+            key_info = api_auth.verify_key(key)
+            if key_info is None:
+                info["status"] = "rejected_bad_key"
+                return JSONResponse(
+                    status_code=401,
+                    content={"error": "неверный или отозванный API-ключ"})
+            info.update({
+                "status": "authorized",
+                "api_key_id": key_info["id"],
+                "tenant": key_info["tenant"],
+                "label": key_info["label"],
+            })
+        elif local:
+            # UI с того же компьютера — работает без ключа (обратная совместимость)
+            info["status"] = "anonymous_local"
+        elif _admin_token_ok(request):
+            # удалённый администратор с корректным X-Admin-Token
+            info["status"] = "authorized_admin"
+        elif config.REQUIRE_API_KEY or api_auth.has_active_keys():
+            # ключи настроены → внешние анонимные запросы запрещены
+            info["status"] = "rejected_no_key"
+            return JSONResponse(
+                status_code=401,
+                content={"error": "требуется API-ключ (заголовок X-API-Key)"})
+        else:
+            # ключей нет и REQUIRE_API_KEY не задан → прежний открытый режим
+            info["status"] = "anonymous"
+
+        # Локально-ограниченные эндпоинты: только администратор машины
+        if _is_local_only(path) and not _is_admin_request(request, local):
+            info["status"] = "forbidden_remote"
+            return JSONResponse(
+                status_code=403,
+                content={"error": "доступ только с локального компьютера"})
+
+        return await call_next(request)
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Ограничение частоты для внешних запросов (по ключу либо по IP).
+
+    Локальный UI лимитами не ограничивается. «Тяжёлые» эндпоинты (импорт,
+    экспорт) имеют отдельный, более строгий лимит. Значения читаются из
+    ``app.core.config`` в момент запроса.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        if not path.startswith("/api") or request.method == "OPTIONS":
+            return await call_next(request)
+        info = request.scope.get("mrauth", {})
+        if info.get("status") == "anonymous_local":
+            return await call_next(request)
+
+        if info.get("api_key_id") is not None:
+            subject = "key:%d" % info["api_key_id"]
+        else:
+            subject = "ip:%s" % _client_ip(request)
+
+        # Heavy and normal requests are counted SEPARATELY: they have
+        # different limits, so the buckets must be independent.
+        if _is_heavy(path, request.method):
+            limit = config.HEAVY_RATE_LIMIT_PER_MIN
+            subject = subject + ":heavy"
+        else:
+            limit = config.RATE_LIMIT_PER_MIN
+        window = config.RATE_LIMIT_WINDOW
+
+        if not rate_limiter.check(subject, limit, window):
+            info["status"] = "rate_limited"
+            retry_after = int(rate_limiter.retry_after(subject, window)) or 1
+            return JSONResponse(
+                status_code=429,
+                content={"error": "превышен лимит запросов (%d за %d сек)" % (limit, window)},
+                headers={"Retry-After": str(retry_after)})
+        return await call_next(request)
+
+
+# Порядок add_middleware: ПОСЛЕДНИЙ добавленный работает ПЕРВЫМ на запросе.
+# Цепочка на запрос: CORS → Аудит → Авторизация → RateLimit → роуты.
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(AuthMiddleware)
+app.add_middleware(AuditMiddleware)
+_origins = config.CORS_ORIGINS if config.CORS_ORIGINS else ["*"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origins,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["Retry-After"],
+)
 
 
 def _gc_sessions() -> None:
@@ -210,20 +483,16 @@ def _autosave_draft(res: ImportResult) -> None:
 
 
 # --------------------------------------------------------------------------- #
-#  Роуты
+#  Роуты (один и тот же роутер доступен как /api/... для UI, так и /api/v1/...
+#  для МИС; см. include_router в конце файла)
 # --------------------------------------------------------------------------- #
-@app.get("/")
-def index() -> FileResponse:
-    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
-
-
-@app.get("/api/health")
+@router.get("/health")
 def health() -> Dict[str, Any]:
     return {"status": "ok", "app": "med-roster", "version": __version__}
 
 
 # --------------------------------------------------------------------------- #
-#  Остановка сервиса
+#  Остановка сервиса (только локально / X-Admin-Token)
 # --------------------------------------------------------------------------- #
 # Пауза перед завершением процесса — чтобы ответ клиенту успел уйти по сети.
 SHUTDOWN_DELAY = 0.5
@@ -249,7 +518,7 @@ def _schedule_shutdown() -> None:
     threading.Thread(target=_stop, daemon=True).start()
 
 
-@app.post("/api/shutdown")
+@router.post("/shutdown")
 def shutdown() -> JSONResponse:
     """Остановить сервис (завершить процесс сервера)."""
     _schedule_shutdown()
@@ -257,7 +526,7 @@ def shutdown() -> JSONResponse:
                                  "message": "Сервис останавливается…"})
 
 
-@app.get("/api/calendar/{year}")
+@router.get("/calendar/{year}")
 def calendar(year: int) -> Dict[str, Any]:
     cal = get_year_calendar(year)
     months = []
@@ -279,7 +548,7 @@ def calendar(year: int) -> Dict[str, Any]:
     }
 
 
-@app.post("/api/import")
+@router.post("/import")
 async def import_file(file: UploadFile = File(...),
                       year: Optional[int] = Form(None),
                       month: Optional[int] = Form(None)) -> JSONResponse:
@@ -307,7 +576,7 @@ async def import_file(file: UploadFile = File(...),
 # --------------------------------------------------------------------------- #
 #  Ручной ввод графика
 # --------------------------------------------------------------------------- #
-@app.post("/api/schedule")
+@router.post("/schedule")
 def create_schedule(year: int = Body(...), month: int = Body(...)) -> JSONResponse:
     """Создать пустой график для ручного ввода (год + месяц)."""
     try:
@@ -320,7 +589,7 @@ def create_schedule(year: int = Body(...), month: int = Body(...)) -> JSONRespon
 # --------------------------------------------------------------------------- #
 #  Сотрудники (CRUD)
 # --------------------------------------------------------------------------- #
-@app.post("/api/session/{sid}/employees")
+@router.post("/session/{sid}/employees")
 def add_employee(sid: str,
                  name: str = Body(...),
                  position: str = Body(""),
@@ -349,7 +618,7 @@ def add_employee(sid: str,
     return _refresh_session(sid)
 
 
-@app.post("/api/session/{sid}/employees/bulk")
+@router.post("/session/{sid}/employees/bulk")
 def add_employees_bulk(sid: str,
                        employees: List[Dict[str, Any]] = Body(..., embed=True)) -> JSONResponse:
     """Массовое добавление сотрудников (список {name, position, rate}).
@@ -387,7 +656,7 @@ def add_employees_bulk(sid: str,
     return _refresh_session(sid)
 
 
-@app.patch("/api/session/{sid}/employees/{index}")
+@router.patch("/session/{sid}/employees/{index}")
 def update_employee(sid: str, index: int,
                     name: Optional[str] = Body(None),
                     position: Optional[str] = Body(None),
@@ -423,7 +692,7 @@ def update_employee(sid: str, index: int,
     return _refresh_session(sid)
 
 
-@app.delete("/api/session/{sid}/employees/{index}")
+@router.delete("/session/{sid}/employees/{index}")
 def delete_employee(sid: str, index: int) -> JSONResponse:
     """Удалить сотрудника из графика."""
     session = _get_session(sid)
@@ -440,7 +709,7 @@ def delete_employee(sid: str, index: int) -> JSONResponse:
 # --------------------------------------------------------------------------- #
 #  Сохранение / загрузка / генерация следующих месяцев
 # --------------------------------------------------------------------------- #
-@app.post("/api/session/{sid}/save")
+@router.post("/session/{sid}/save")
 def save_schedule(sid: str, org: str = Body("", embed=True),
                   dept: str = Body("", embed=True),
                   title: str = Body("", embed=True)) -> JSONResponse:
@@ -460,7 +729,7 @@ def save_schedule(sid: str, org: str = Body("", embed=True),
                                  "month": res.month})
 
 
-@app.get("/api/saved")
+@router.get("/saved")
 def saved_list() -> JSONResponse:
     """Список сохранённых месяцев."""
     try:
@@ -473,7 +742,7 @@ def saved_list() -> JSONResponse:
 # --------------------------------------------------------------------------- #
 #  Черновик: автосохранение текущей работы и восстановление после перезапуска
 # --------------------------------------------------------------------------- #
-@app.get("/api/draft")
+@router.get("/draft")
 def draft_info() -> JSONResponse:
     """Сводка о сохранённом черновике (есть ли, период, число сотрудников)."""
     try:
@@ -482,7 +751,7 @@ def draft_info() -> JSONResponse:
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
-@app.post("/api/draft/restore")
+@router.post("/draft/restore")
 def draft_restore() -> JSONResponse:
     """Восстановить черновик в новую сессию (если он есть).
 
@@ -499,14 +768,14 @@ def draft_restore() -> JSONResponse:
     return _new_session(res)
 
 
-@app.delete("/api/draft")
+@router.delete("/draft")
 def draft_clear() -> JSONResponse:
     """Удалить черновик (пользователь решил начать заново / сохранил месяц)."""
     storage.clear_draft()
     return JSONResponse(content={"cleared": True})
 
 
-@app.post("/api/saved/{saved_id}/rename")
+@router.post("/saved/{saved_id}/rename")
 def rename_saved_route(saved_id: int, title: str = Body(..., embed=True)) -> JSONResponse:
     """Переименовать сохранённый месяц."""
     ok = storage.rename_saved(saved_id, title)
@@ -515,7 +784,7 @@ def rename_saved_route(saved_id: int, title: str = Body(..., embed=True)) -> JSO
     return JSONResponse(content={"id": saved_id, "title": (title or "").strip()})
 
 
-@app.patch("/api/saved/{saved_id}")
+@router.patch("/saved/{saved_id}")
 def update_saved_route(saved_id: int, org: str = Body(""), dept: str = Body(""),
                        sid: str = Body(...)) -> JSONResponse:
     """Обновить данные сохранённого месяца из текущей сессии."""
@@ -531,7 +800,7 @@ def update_saved_route(saved_id: int, org: str = Body(""), dept: str = Body(""),
     return JSONResponse(content={"id": saved_id, "year": res.year, "month": res.month})
 
 
-@app.get("/api/saved/export")
+@router.get("/saved/export")
 def export_database_route() -> FileResponse:
     """Скачать полную базу сохранённых месяцев (копия в указанное место)."""
     import time
@@ -542,7 +811,7 @@ def export_database_route() -> FileResponse:
                         headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
-@app.post("/api/saved/import")
+@router.post("/saved/import")
 async def import_database_route(file: UploadFile = File(...)) -> JSONResponse:
     """Загрузить стороннюю базу ``med-roster.db`` и объединить с локальной."""
     data = await file.read()
@@ -567,7 +836,7 @@ async def import_database_route(file: UploadFile = File(...)) -> JSONResponse:
     return JSONResponse(content={"added": added})
 
 
-@app.post("/api/saved/{saved_id}/load")
+@router.post("/saved/{saved_id}/load")
 def load_saved(saved_id: int) -> JSONResponse:
     """Загрузить сохранённый месяц в новую сессию."""
     data = storage.get_saved(saved_id)
@@ -580,7 +849,7 @@ def load_saved(saved_id: int) -> JSONResponse:
     return _new_session(res)
 
 
-@app.delete("/api/saved/{saved_id}")
+@router.delete("/saved/{saved_id}")
 def delete_saved_route(saved_id: int) -> JSONResponse:
     """Удалить сохранённый месяц."""
     ok = storage.delete_saved(saved_id)
@@ -589,7 +858,7 @@ def delete_saved_route(saved_id: int) -> JSONResponse:
     return JSONResponse(content={"deleted": saved_id})
 
 
-@app.post("/api/session/{sid}/generate")
+@router.post("/session/{sid}/generate")
 def generate_route(sid: str,
                    year: int = Body(...),
                    month: int = Body(...),
@@ -606,7 +875,7 @@ def generate_route(sid: str,
     return _new_session(new_res)
 
 
-@app.post("/api/session/{sid}/cell")
+@router.post("/session/{sid}/cell")
 def edit_cell(sid: str,
               row_index: int = Body(...),
               day: int = Body(...),
@@ -648,7 +917,7 @@ def edit_cell(sid: str,
     return JSONResponse(content=payload)
 
 
-@app.post("/api/session/{sid}/autocorrect")
+@router.post("/session/{sid}/autocorrect")
 def autocorrect_route(sid: str) -> JSONResponse:
     """Применить детерминированные исправления и пересчитать валидацию."""
     session = _get_session(sid)
@@ -665,7 +934,7 @@ def autocorrect_route(sid: str) -> JSONResponse:
     return JSONResponse(content=payload)
 
 
-@app.post("/api/session/{sid}/autofill")
+@router.post("/session/{sid}/autofill")
 def autofill_route(sid: str,
                    row_index: int = Body(...),
                    shift: str = Body(...),
@@ -691,7 +960,7 @@ def autofill_route(sid: str,
     return JSONResponse(content=payload)
 
 
-@app.post("/api/session/{sid}/copy")
+@router.post("/session/{sid}/copy")
 def copy_route(sid: str,
                from_index: int = Body(...),
                to_index: int = Body(...)) -> JSONResponse:
@@ -714,8 +983,9 @@ def copy_route(sid: str,
 
 # --------------------------------------------------------------------------- #
 #  Обновления приложения и необходимых компонентов
+#  (POST-обновления — только локально / X-Admin-Token, см. AuthMiddleware)
 # --------------------------------------------------------------------------- #
-@app.get("/api/maintenance")
+@router.get("/maintenance")
 def maintenance() -> JSONResponse:
     try:
         return JSONResponse(content=updater.maintenance_status())
@@ -723,7 +993,7 @@ def maintenance() -> JSONResponse:
         return JSONResponse(status_code=503, content={"error": str(exc)})
 
 
-@app.post("/api/maintenance/dependencies")
+@router.post("/maintenance/dependencies")
 def maintenance_dependencies() -> JSONResponse:
     try:
         result = updater.update_dependencies()
@@ -732,7 +1002,7 @@ def maintenance_dependencies() -> JSONResponse:
     return JSONResponse(status_code=200 if result.get("ok") else 500, content=result)
 
 
-@app.post("/api/maintenance/app")
+@router.post("/maintenance/app")
 def maintenance_app_update() -> JSONResponse:
     try:
         result = updater.install_app_update()
@@ -743,7 +1013,7 @@ def maintenance_app_update() -> JSONResponse:
     return JSONResponse(status_code=200 if result.get("ok") else 400, content=result)
 
 
-@app.get("/api/export/xls/{sid}")
+@router.get("/export/xls/{sid}")
 def export_xls_route(sid: str, org: Optional[str] = None,
                      dept: Optional[str] = None) -> Response:
     """Выгрузить исправленный график в бинарном формате Excel ``.xls``."""
@@ -762,7 +1032,7 @@ def export_xls_route(sid: str, org: Optional[str] = None,
     )
 
 
-@app.get("/api/export/csv/{sid}")
+@router.get("/export/csv/{sid}")
 def export_csv_route(sid: str) -> Response:
     """Выгрузить исправленный график в CSV."""
     session = _get_session(sid)
@@ -779,7 +1049,7 @@ def export_csv_route(sid: str) -> Response:
     )
 
 
-@app.get("/api/export/t13/{sid}")
+@router.get("/export/t13/{sid}")
 def export_t13_route(sid: str, org: Optional[str] = None,
                      dept: Optional[str] = None) -> Response:
     """Сформировать табель Т-13 (печатный HTML)."""
@@ -798,7 +1068,7 @@ def export_t13_route(sid: str, org: Optional[str] = None,
     )
 
 
-@app.get("/api/export/okud/{sid}")
+@router.get("/export/okud/{sid}")
 def export_okud_route(sid: str, org: Optional[str] = None,
                       dept: Optional[str] = None) -> Response:
     """Сформировать табель ОКУД 0504421 (печатный HTML)."""
@@ -817,7 +1087,7 @@ def export_okud_route(sid: str, org: Optional[str] = None,
     )
 
 
-@app.get("/api/export/signoff/{sid}")
+@router.get("/export/signoff/{sid}")
 def export_signoff_route(sid: str, org: Optional[str] = None,
                          dept: Optional[str] = None) -> Response:
     """Сформировать график на подпись (печатный HTML)."""
@@ -834,6 +1104,102 @@ def export_signoff_route(sid: str, org: Optional[str] = None,
         headers={"Content-Disposition":
                  'attachment; filename="%s"' % filename},
     )
+
+
+# --------------------------------------------------------------------------- #
+#  Управление API-ключами и аудит (только локально / X-Admin-Token)
+# --------------------------------------------------------------------------- #
+@router.get("/keys")
+def list_keys_route() -> JSONResponse:
+    """Список API-ключей (без секретов: префиксы и метаданные)."""
+    return JSONResponse(content={"keys": api_auth.list_keys()})
+
+
+@router.post("/keys")
+def create_key_route(tenant: str = Body(..., embed=True),
+                     label: str = Body("", embed=True)) -> JSONResponse:
+    """Выпустить новый API-ключ для тенанта (клиники/МИС).
+
+    Полный ключ возвращается ровно один раз — сохранить его в МИС сразу;
+    восстановлению он не подлежит (только перевыпуск).
+    """
+    tenant = (tenant or "").strip()
+    if not tenant:
+        return JSONResponse(status_code=422,
+                            content={"error": "укажите название тенанта (клиники/МИС)"})
+    try:
+        info = api_auth.create_key(tenant, label=label)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+    return JSONResponse(content=info)
+
+
+@router.delete("/keys/{key_id}")
+def revoke_key_route(key_id: int) -> JSONResponse:
+    """Отозвать ключ (обратимо через /keys/{id}/activate)."""
+    ok = api_auth.revoke_key(key_id)
+    if not ok:
+        return JSONResponse(status_code=404, content={"error": "ключ не найден"})
+    return JSONResponse(content={"id": key_id, "revoked": True})
+
+
+@router.post("/keys/{key_id}/activate")
+def activate_key_route(key_id: int) -> JSONResponse:
+    """Восстановить отозванный ключ."""
+    ok = api_auth.activate_key(key_id)
+    if not ok:
+        return JSONResponse(status_code=404, content={"error": "ключ не найден"})
+    return JSONResponse(content={"id": key_id, "activated": True})
+
+
+@router.get("/keys/tenants")
+def list_tenants_route() -> JSONResponse:
+    """Список тенантов с числом активных ключей."""
+    return JSONResponse(content={"tenants": api_auth.list_tenants()})
+
+
+@router.get("/audit")
+def audit_route(limit: int = 100,
+                auth_status: Optional[str] = None,
+                key_id: Optional[int] = None) -> JSONResponse:
+    """Последние записи аудита (новые сверху).
+
+    Фильтры: ``auth_status`` (authorized / anonymous_local / anonymous /
+    rejected_bad_key / rejected_no_key / rate_limited / forbidden_remote),
+    ``key_id`` — только запросы конкретного ключа.
+    """
+    limit = max(1, min(int(limit or 100), 1000))
+    return JSONResponse(content={
+        "entries": audit_log.recent(limit=limit, auth_status=auth_status,
+                                    api_key_id=key_id),
+    })
+
+
+@router.get("/audit/stats")
+def audit_stats_route() -> JSONResponse:
+    """Сводка аудита: счётчики по результатам авторизации, топ тенантов."""
+    return JSONResponse(content=audit_log.stats())
+
+
+@router.delete("/audit")
+def audit_clear_route(older_than_days: Optional[int] = None) -> JSONResponse:
+    """Очистить аудит (весь или старше N дней)."""
+    removed = audit_log.clear(older_than_days=older_than_days)
+    return JSONResponse(content={"removed": removed})
+
+
+# --------------------------------------------------------------------------- #
+#  Подключение роутера и статики
+# --------------------------------------------------------------------------- #
+# /api/v1 — контракт для внешних систем (OpenAPI-схема описывает только его);
+# /api    — прежние пути UI и обратной совместимости (в схему не входят).
+app.include_router(router, prefix="/api/v1")
+app.include_router(router, prefix="/api", include_in_schema=False)
+
+
+@app.get("/", include_in_schema=False)  # UI-страница, не часть API-контракта
+def index() -> FileResponse:
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
