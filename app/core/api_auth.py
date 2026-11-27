@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """API-ключи и тенанты (подразделения/клиники) для интеграции с внешними системами (МИС).
 
-Модель доступа (Фаза 1):
-* один ключ = один тенант (клиника/МИС) с полными правами на данные API;
-* роли и гранулярные права — в следующих фазах;
+Модель доступа:
+* один ключ = один тенант (клиника/МИС);
+* права ключа — ``scopes``: ``read`` (GET/HEAD) и/или ``write`` (остальные
+  методы). Ключи, созданные до 0.12.0 (и новые без явного указания), имеют
+  оба права — поведение не меняется;
 * управление ключами (создание/отзыв) — только с локального компьютера
   (см. middleware в ``app/main.py``).
 
@@ -17,14 +19,20 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
+import sqlite3
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 from app.core import storage
 
 # Формат ключа: mrk_<40 hex>
 KEY_MARKER = "mrk_"
+
+# Права ключа (scopes). read — чтение (GET/HEAD), write — изменение (POST/…).
+KNOWN_SCOPES = ("read", "write")
+DEFAULT_SCOPES = ["read", "write"]
 _KEY_RANDOM_BYTES = 20  # 20 байт → 40 hex-символов
 _DISPLAY_PREFIX_LEN = 12  # сколько символов показывать в списке ключей
 
@@ -65,11 +73,19 @@ def ensure_tenant(name: str) -> int:
         row = conn.execute("SELECT id FROM tenants WHERE name=?", (name,)).fetchone()
         if row is not None:
             return int(row["id"])
-        cur = conn.execute(
-            "INSERT INTO tenants (name, created_at) VALUES (?, ?)",
-            (name, time.time()))
-        conn.commit()
-        return int(cur.lastrowid)
+        try:
+            cur = conn.execute(
+                "INSERT INTO tenants (name, created_at) VALUES (?, ?)",
+                (name, time.time()))
+            conn.commit()
+            return int(cur.lastrowid)
+        except sqlite3.IntegrityError:
+            # гонка: тенант создан параллельным запросом — берём существующий
+            row = conn.execute(
+                "SELECT id FROM tenants WHERE name=?", (name,)).fetchone()
+            if row is not None:
+                return int(row["id"])
+            raise
     finally:
         conn.close()
 
@@ -108,22 +124,42 @@ def list_tenants() -> List[Dict]:
 # --------------------------------------------------------------------------- #
 #  CRUD ключей
 # --------------------------------------------------------------------------- #
-def create_key(tenant: str, label: str = "") -> Dict:
+def _normalize_scopes(scopes: Union[None, str, List[str]]) -> List[str]:
+    """Привести права к списку: None → полные; строка через запятую; список.
+
+    Неизвестные права отбрасываются; пустой результат → полные права
+    (ключ без прав не имеет смысла и только запутает администратора).
+    """
+    if scopes is None:
+        return list(DEFAULT_SCOPES)
+    if isinstance(scopes, str):
+        parts = [s.strip().lower() for s in scopes.split(",")]
+    else:
+        parts = [str(s).strip().lower() for s in scopes]
+    out = [s for s in parts if s in KNOWN_SCOPES]
+    return out or list(DEFAULT_SCOPES)
+
+
+def create_key(tenant: str, label: str = "",
+                scopes: Union[None, str, List[str]] = None) -> Dict:
     """Создать новый API-ключ для тенанта.
 
+    ``scopes`` — права ключа: ``read`` и/или ``write`` (None/пусто — оба).
     Возвращает словарь с полным ключом (``key``) — он показывается пользователю
     ровно один раз; восстановить его нельзя, только перевыпустить.
     """
     tenant_id = ensure_tenant(tenant)
     label = (label or "").strip()
+    norm_scopes = _normalize_scopes(scopes)
     key = generate_key()
     conn = storage.get_connection()
     try:
         cur = conn.execute(
             "INSERT INTO api_keys (tenant_id, key_hash, key_prefix, label, "
-            "                      is_active, created_at) "
-            "VALUES (?, ?, ?, ?, 1, ?)",
-            (tenant_id, _hash_key(key), _display_prefix(key), label, time.time()))
+            "                      is_active, created_at, scopes) "
+            "VALUES (?, ?, ?, ?, 1, ?, ?)",
+            (tenant_id, _hash_key(key), _display_prefix(key), label,
+             time.time(), json.dumps(norm_scopes)))
         conn.commit()
         key_id = int(cur.lastrowid)
     finally:
@@ -135,6 +171,7 @@ def create_key(tenant: str, label: str = "") -> Dict:
         "label": label,
         "key": key,          # единственный раз в открытом виде
         "prefix": _display_prefix(key),
+        "scopes": norm_scopes,
     }
 
 
@@ -144,7 +181,7 @@ def list_keys() -> List[Dict]:
     try:
         rows = conn.execute(
             "SELECT k.id, k.key_prefix, k.label, k.is_active, k.created_at, "
-            "       k.last_used_at, k.request_count, t.name AS tenant "
+            "       k.last_used_at, k.request_count, k.scopes, t.name AS tenant "
             "FROM api_keys k JOIN tenants t ON t.id = k.tenant_id "
             "ORDER BY k.is_active DESC, k.id DESC").fetchall()
         out = []
@@ -158,6 +195,7 @@ def list_keys() -> List[Dict]:
                 "created_at": r["created_at"],
                 "last_used_at": r["last_used_at"],
                 "request_count": int(r["request_count"] or 0),
+                "scopes": _parse_scopes(r["scopes"]),
             })
         return out
     finally:
@@ -209,6 +247,22 @@ def delete_key(key_id: int) -> bool:
 # --------------------------------------------------------------------------- #
 #  Проверка ключей
 # --------------------------------------------------------------------------- #
+def _parse_scopes(raw) -> List[str]:
+    """Разобрать JSON-список прав; NULL (ключи до 0.12.0) и битый JSON ->
+    полные права (обратная совместимость: поведение ключа не меняется).
+    """
+    if raw is None:
+        return list(DEFAULT_SCOPES)
+    try:
+        scopes = json.loads(raw)
+    except (TypeError, ValueError):
+        return list(DEFAULT_SCOPES)
+    if not isinstance(scopes, list):
+        return list(DEFAULT_SCOPES)
+    out = [s for s in scopes if s in KNOWN_SCOPES]
+    return out or list(DEFAULT_SCOPES)
+
+
 def verify_key(key: str) -> Optional[Dict]:
     """Проверить ключ → метаданные тенанта или None (ключ неверный/отозван)."""
     key = (key or "").strip()
@@ -218,7 +272,7 @@ def verify_key(key: str) -> Optional[Dict]:
     conn = storage.get_connection()
     try:
         row = conn.execute(
-            "SELECT k.id, k.label, k.is_active, t.name AS tenant "
+            "SELECT k.id, k.label, k.is_active, k.scopes, t.name AS tenant "
             "FROM api_keys k JOIN tenants t ON t.id = k.tenant_id "
             "WHERE k.key_hash = ?", (key_hash,)).fetchone()
     finally:
@@ -229,6 +283,7 @@ def verify_key(key: str) -> Optional[Dict]:
         "id": int(row["id"]),
         "tenant": row["tenant"],
         "label": row["label"] or "",
+        "scopes": _parse_scopes(row["scopes"]),
     }
 
 

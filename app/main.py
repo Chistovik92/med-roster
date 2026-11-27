@@ -24,6 +24,7 @@
 """
 from __future__ import annotations
 
+import csv
 import json
 import os
 import re
@@ -31,6 +32,7 @@ import secrets
 import threading
 import time
 import uuid
+from io import StringIO
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, File, Form, UploadFile, Body, APIRouter, Request
@@ -38,6 +40,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
+from pydantic import BaseModel, Field
 
 from app import __version__
 from app.core import storage, config, signing
@@ -95,6 +98,141 @@ _SESSION_TTL = 30 * 60
 # в формате .xls весит десятки КБ; лимит защищает от случайной загрузки гиганта
 # и от исчерпания памяти на слабом железе (2 ГБ).
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 МБ
+
+
+# --------------------------------------------------------------------------- #
+#  Pydantic-модели тел запросов /api/v1 (0.12.0)
+# --------------------------------------------------------------------------- #
+# Типы и ограничения полей попадают в OpenAPI-схему (/api/openapi.json):
+# МИС генерирует клиент по схеме, а не по примерам из документации.
+# Семантика (норма 30/33/36/39/40, день в пределах месяца, период сессии)
+# проверяется в роутах — чтобы формат ответов остался прежним ({"error": ...}).
+class EmployeeIn(BaseModel):
+    """Сотрудник в push/sync: ФИО, должность, табельный номер, ставка, норма."""
+    name: str = Field(..., min_length=1, description="Ф.И.О. сотрудника")
+    position: Optional[str] = Field(None, description="должность")
+    employee_id: Optional[str] = Field(
+        None, description="табельный номер / стабильный ID в МИС")
+    rate: Optional[float] = Field(
+        None, description="доля ставки; null/нет -> 1.0; допустимо 0 < rate <= 2")
+    week_norm: Optional[int] = Field(
+        None, description="недельная норма, ч: 30/33/36/39/40")
+    days: Optional[Dict[str, str]] = Field(
+        None, description="ячейки графика: номер дня -> значение")
+
+
+class RosterPushIn(BaseModel):
+    """POST /roster — график месяца от МИС (push)."""
+    year: int = Field(..., ge=1991, le=2100, description="год")
+    month: int = Field(..., ge=1, le=12, description="месяц")
+    department: Optional[str] = Field(None, description="подразделение")
+    employees: List[EmployeeIn] = Field(..., description="сотрудники графика")
+    save: bool = Field(False, description="сразу сохранить месяц в базу")
+    org: Optional[str] = Field(None, description="учреждение для печатных форм")
+    title: Optional[str] = Field(None, description="название сохранения")
+
+
+class EmployeeSyncIn(BaseModel):
+    """POST /employees/sync — мастер-данные сотрудников (HR -> МедГрафик)."""
+    year: int = Field(..., ge=1991, le=2100)
+    month: int = Field(..., ge=1, le=12)
+    employees: List[EmployeeIn] = Field(..., description="актуальный список")
+    department: Optional[str] = None
+    session_id: Optional[str] = Field(
+        None, description="синхронизировать в существующую сессию")
+    remove_missing: bool = Field(
+        False, description="удалить отсутствующих в списке")
+
+
+class WebhookCreateIn(BaseModel):
+    """POST /webhooks — регистрация вебхука."""
+    url: str = Field(..., min_length=1, description="URL обработчика (http(s)://)")
+    events: Optional[List[str]] = Field(
+        None, description="события подписки (по умолчанию все, кроме webhook.test)")
+    tenant: Optional[str] = Field(
+        None, description="тенант (только для локального администратора)")
+
+
+class WebhookReplayIn(BaseModel):
+    """POST /webhooks/{id}/replay — повтор неудачной доставки."""
+    delivery_id: str = Field(..., min_length=1,
+                             description="id доставки из истории")
+
+
+class KeyCreateIn(BaseModel):
+    """POST /keys — выпуск API-ключа (только локальный администратор)."""
+    tenant: str = Field(..., min_length=1, description="название тенанта (МИС)")
+    label: Optional[str] = Field(None, description="произвольная пометка")
+    scopes: Optional[List[str]] = Field(
+        None, description='права ключа: "read" и/или "write" (по умолчанию оба)')
+
+
+# --------------------------------------------------------------------------- #
+#  Идемпотентность push/sync (заголовок Idempotency-Key, 0.12.0)
+# --------------------------------------------------------------------------- #
+# Повтор запроса с тем же ключом (ретрай из-за обрыва сети) не создаёт
+# вторую сессию/запись, а возвращает сохранённый ответ. Ключ действует
+# в рамках субъекта (API-ключ или IP) и живёт _IDEMPOTENCY_TTL.
+_IDEMPOTENCY_TTL = 24 * 3600.0
+_IDEMPOTENCY_MAX = 512
+_idempotency: "Dict[Tuple[str, str], Tuple[float, Dict[str, Any], int]]" = {}
+_idempotency_lock = threading.Lock()
+
+
+def _idem_key(request: Request) -> str:
+    return (request.headers.get("idempotency-key", "") or "").strip()
+
+
+def _idem_subject(request: Request) -> str:
+    """Кто делает запрос: API-ключ (стабильный) или IP."""
+    info = request.scope.get("mrauth", {})
+    if info.get("api_key_id") is not None:
+        return "key:%d" % info["api_key_id"]
+    return "ip:%s" % _client_ip(request)
+
+
+def _idem_lookup(request: Request):
+    """Сохранённый ответ для этого Idempotency-Key или None."""
+    key = _idem_key(request)
+    if not key:
+        return None
+    subject = _idem_subject(request)
+    now = time.time()
+    with _idempotency_lock:
+        rec = _idempotency.get((subject, key))
+        if rec is None or now - rec[0] > _IDEMPOTENCY_TTL:
+            return None
+        return dict(rec[1]), rec[2]
+
+
+def _idem_store(request: Request, body: Dict[str, Any],
+                status: int = 200) -> None:
+    """Запомнить успешный ответ для Idempotency-Key (если заголовок задан)."""
+    key = _idem_key(request)
+    if not key:
+        return
+    subject = _idem_subject(request)
+    now = time.time()
+    with _idempotency_lock:
+        # не даём кэшу расти бесконечно: сначала просроченные, потом самые старые
+        if len(_idempotency) >= _IDEMPOTENCY_MAX:
+            for k in [k for k, v in _idempotency.items()
+                      if now - v[0] > _IDEMPOTENCY_TTL]:
+                _idempotency.pop(k, None)
+            while len(_idempotency) >= _IDEMPOTENCY_MAX:
+                oldest = min(_idempotency, key=lambda k: _idempotency[k][0])
+                _idempotency.pop(oldest, None)
+        _idempotency[(subject, key)] = (now, dict(body), int(status))
+
+
+def _idem_replay(request: Request) -> Optional[JSONResponse]:
+    """Если запрос уже выполнялся с этим ключом — готовый ответ (или None)."""
+    cached = _idem_lookup(request)
+    if cached is None:
+        return None
+    body, status = cached
+    return JSONResponse(status_code=status, content=body,
+                        headers={"Idempotency-Replayed": "true"})
 
 
 # --------------------------------------------------------------------------- #
@@ -161,11 +299,18 @@ def _is_admin_request(request: Request, local: bool) -> bool:
 
 
 def _is_heavy(path: str, method: str) -> bool:
-    """«Тяжёлые» запросы: импорт .xls/.db и все экспорты (отдельный лимит)."""
+    """«Тяжёлые» запросы (отдельный, более строгий лимит).
+
+    Импорт .xls/.db, все экспорты и массовые операции: push графика целиком
+    и синхронизация сотрудников (крупные тела запросов и полная перерисовка
+    валидации).
+    """
     p = path.lower()
     if "/export/" in p:
         return True
-    if method == "POST" and p.endswith("/import"):
+    if method == "POST" and (p.endswith("/import")
+                             or p.endswith("/roster")
+                             or p.endswith("/employees/sync")):
         return True
     return False
 
@@ -222,6 +367,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
       * anonymous          — запрос без ключа при «открытом» режиме (ключей нет);
       * rejected_bad_key   — неверный/отозванный ключ → 401;
       * rejected_no_key    — внешний запрос без ключа при наличии ключей → 401;
+      * forbidden_scope    — у ключа нет права на этот метод (read/write) → 403;
       * forbidden_remote   — локальный эндпоинт с внешнего клиента → 403;
       * rate_limited       — 429 от RateLimitMiddleware.
     """
@@ -258,7 +404,18 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 "api_key_id": key_info["id"],
                 "tenant": key_info["tenant"],
                 "label": key_info["label"],
+                "scopes": key_info.get("scopes") or list(api_auth.DEFAULT_SCOPES),
             })
+            # 0.12.0: права ключа (scopes). GET/HEAD — «read», остальные
+            # методы — «write». Ключи, выпущенные до 0.12.0, имеют оба
+            # права — их поведение не меняется.
+            need = "read" if request.method in ("GET", "HEAD") else "write"
+            if need not in info["scopes"]:
+                info["status"] = "forbidden_scope"
+                return JSONResponse(
+                    status_code=403,
+                    content={"error": "у ключа нет права «%s» (scopes: %s)"
+                             % (need, ", ".join(info["scopes"]))})
         elif local:
             # UI с того же компьютера — работает без ключа (обратная совместимость)
             info["status"] = "anonymous_local"
@@ -388,6 +545,7 @@ def _row_to_dict(row: EmployeeRow, result: ImportResult) -> Dict[str, Any]:
         "index": row.index,
         "name": row.name,
         "position": row.position,
+        "employee_id": row.employee_id or "",
         "rate": row.rate,
         "week_norm": row.week_norm,
         "norm_rule": row.norm_rule,
@@ -461,15 +619,17 @@ def _new_session(res: ImportResult) -> JSONResponse:
     return JSONResponse(content=payload)
 
 
-def _refresh_session(sid: str,
-                     extra: Optional[Dict[str, Any]] = None) -> JSONResponse:
-    """Пересчитать валидацию текущей сессии и вернуть её сериализацию.
+def _refresh_session_payload(sid: str,
+                             extra: Optional[Dict[str, Any]] = None
+                             ) -> Optional[Dict[str, Any]]:
+    """Пересчитать валидацию сессии; payload или None, если сессии нет.
 
-    ``extra`` — дополнительные поля ответа (например, отчёт синхронизации).
+    Разделено с ``_refresh_session`` ради идемпотентности sync: ответ нужно
+    и вернуть, и запомнить в кэше Idempotency-Key.
     """
     session = _sessions.get(sid)
     if session is None:
-        return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
+        return None
     res: ImportResult = session["result"]
     conflicts = check_all(res)
     session["conflicts"] = conflicts
@@ -478,6 +638,18 @@ def _refresh_session(sid: str,
     payload["session_id"] = sid
     if extra:
         payload.update(extra)
+    return payload
+
+
+def _refresh_session(sid: str,
+                     extra: Optional[Dict[str, Any]] = None) -> JSONResponse:
+    """Пересчитать валидацию текущей сессии и вернуть её сериализацию.
+
+    ``extra`` — дополнительные поля ответа (например, отчёт синхронизации).
+    """
+    payload = _refresh_session_payload(sid, extra)
+    if payload is None:
+        return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
     return JSONResponse(content=payload)
 
 
@@ -586,17 +758,42 @@ def calendar(year: int) -> Dict[str, Any]:
     }
 
 
+async def _read_upload_limited(file: UploadFile):
+    """Прочитать загруженный файл с ограничением размера.
+
+    Возвращает ``(data, None)`` либо ``(None, ответ 413/400)``. Размер
+    проверяется ДО чтения (``UploadFile.size``), а чтение идёт кусками
+    по 1 МБ — клиент с ложным Content-Length не занесёт в память гигант.
+    """
+    declared = getattr(file, "size", None)
+    if declared is not None and int(declared) > MAX_UPLOAD_BYTES:
+        return None, JSONResponse(status_code=413, content={
+            "error": "файл слишком большой (максимум 20 МБ)"})
+    chunks: List[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_UPLOAD_BYTES:
+            return None, JSONResponse(status_code=413, content={
+                "error": "файл слишком большой (максимум 20 МБ)"})
+        chunks.append(chunk)
+    data = b"".join(chunks)
+    if not data:
+        return None, JSONResponse(status_code=400, content={"error": "пустой файл"})
+    return data, None
+
+
 @router.post("/import")
 async def import_file(file: UploadFile = File(...),
                       year: Optional[int] = Form(None),
                       month: Optional[int] = Form(None)) -> JSONResponse:
     """Загрузить .xls, разобрать и провалидировать."""
-    data = await file.read()
-    if not data:
-        return JSONResponse(status_code=400, content={"error": "пустой файл"})
-    if len(data) > MAX_UPLOAD_BYTES:
-        return JSONResponse(status_code=413, content={
-            "error": "файл слишком большой (максимум 20 МБ)"})
+    data, err = await _read_upload_limited(file)
+    if err is not None:
+        return err
 
     try:
         res = import_xls(data, year=year, month=month, filename=file.filename)
@@ -755,20 +952,27 @@ def delete_employee(sid: str, index: int) -> JSONResponse:
 def save_schedule(sid: str, org: str = Body("", embed=True),
                   dept: str = Body("", embed=True),
                   title: str = Body("", embed=True)) -> JSONResponse:
-    """Сохранить текущий график в локальное хранилище (новая копия)."""
+    """Сохранить текущий график в локальное хранилище.
+
+    Запись уникальна по периоду и подразделению (upsert): повторное
+    сохранение того же месяца того же отделения обновляет запись, а не
+    плодит копии в списке сохранений.
+    """
     session = _get_session(sid)
     if session is None:
         return JSONResponse(status_code=404, content={"error": "сессия не найдена"})
     res: ImportResult = session["result"]
     res.department = (dept or "").strip()
     try:
-        saved_id = storage.save_month(res.year, res.month, org or DEFAULT_ORG,
-                                      serialize_result(res), title=(title or ""))
+        saved_id, created = storage.save_month(
+            res.year, res.month, org or DEFAULT_ORG,
+            serialize_result(res), title=(title or ""))
         storage.clear_draft()
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(status_code=500, content={"error": str(exc)})
     try:
-        webhooks.emit_event("month.saved", {
+        # месяц с этим подразделением уже был сохранён — это обновление записи
+        webhooks.emit_event("month.saved" if created else "month.updated", {
             "subject": str(saved_id), "saved_id": saved_id,
             "year": res.year, "month": res.month,
             "org": org or DEFAULT_ORG, "department": res.department,
@@ -777,8 +981,8 @@ def save_schedule(sid: str, org: str = Body("", embed=True),
         })
     except Exception:  # noqa: BLE001
         pass
-    return JSONResponse(content={"id": saved_id, "year": res.year,
-                                 "month": res.month})
+    return JSONResponse(content={"id": saved_id, "created": created,
+                                 "year": res.year, "month": res.month})
 
 
 @router.get("/saved")
@@ -874,12 +1078,9 @@ def export_database_route() -> FileResponse:
 @router.post("/saved/import")
 async def import_database_route(file: UploadFile = File(...)) -> JSONResponse:
     """Загрузить стороннюю базу ``med-roster.db`` и объединить с локальной."""
-    data = await file.read()
-    if not data:
-        return JSONResponse(status_code=400, content={"error": "пустой файл"})
-    if len(data) > MAX_UPLOAD_BYTES:
-        return JSONResponse(status_code=413, content={
-            "error": "файл слишком большой (максимум 20 МБ)"})
+    data, err = await _read_upload_limited(file)
+    if err is not None:
+        return err
     import tempfile
     fd, path = tempfile.mkstemp(suffix=".db", prefix="med-roster-import-")
     try:
@@ -1235,27 +1436,64 @@ def employees_directory(year: Optional[int] = None,
 
 
 @router.post("/employees/sync")
-def employees_sync(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
+def employees_sync(request: Request, payload: EmployeeSyncIn) -> JSONResponse:
     """Синхронизация мастер-данных сотрудников (HR → МедГрафик).
 
-    Тело: ``{year, month, employees: [{name, position?, rate?, week_norm?}],
-    department?, session_id?, remove_missing?}``. Сотрудники сопоставляются
-    по ФИО: новые добавляются, существующие обновляются. При
-    ``remove_missing=true`` сотрудники, отсутствующие в списке, удаляются.
+    Тело: ``{year, month, employees: [{employee_id?, name, position?, rate?,
+    week_norm?}], department?, session_id?, remove_missing?}``.
+    Сотрудники сопоставляются по табельному номеру (``employee_id``), при
+    его отсутствии — по ФИО: новые добавляются, существующие обновляются.
+    При ``remove_missing=true`` сотрудники, отсутствующие в списке,
+    удаляются. Заголовок ``Idempotency-Key`` делает повтор безопасным:
+    вместо второй синхронизации МИС получает сохранённый ответ.
     Возвращает график периода (сессию) и отчёт синхронизации.
     """
-    year = payload.get("year")
-    month = payload.get("month")
-    if not isinstance(year, int) or not isinstance(month, int) \
-            or not (1 <= month <= 12):
-        return JSONResponse(status_code=422,
-                            content={"error": "укажите year и month (1-12)"})
-    employees = payload.get("employees")
-    if not isinstance(employees, list) or not employees:
+    replay = _idem_replay(request)
+    if replay is not None:
+        return replay
+
+    year = payload.year
+    month = payload.month
+    employees = [e.model_dump() for e in payload.employees]
+    if not employees:
         return JSONResponse(status_code=422,
                             content={"error": "укажите employees (список)"})
 
-    session_id = payload.get("session_id")
+    # --- пре-валидация всего списка ДО изменения сессии/графика ------------- #
+    # Раньше норма проверялась внутри цикла применения: невалидная запись в
+    # середине списка возвращала 422 ПОСЛЕ того, как половина сотрудников уже
+    # применилась к сессии. Теперь график меняется только после того, как
+    # весь список прошёл проверку (ставка тоже: мусор не превращается молча
+    # в 1.0, а честно отклоняется).
+    records: List[Dict[str, Any]] = []
+    for i, e in enumerate(employees):
+        name = (e.get("name") or "").strip()
+        if not name:
+            return JSONResponse(status_code=422, content={
+                "error": "employees[%d]: укажите name" % i})
+        position = (e.get("position") or "").strip()
+        employee_id = str(e.get("employee_id") or "").strip()
+        raw_rate = e.get("rate")
+        if raw_rate is None or raw_rate == "":
+            rate = 1.0
+        else:
+            try:
+                rate = float(raw_rate)
+            except (TypeError, ValueError):
+                rate = 0.0  # отклонится следующей проверкой
+        if not (0 < rate <= 2):
+            return JSONResponse(status_code=422, content={
+                "error": "employees[%d]: неверная ставка (0 < rate <= 2)" % i})
+        week_norm = e.get("week_norm")
+        if week_norm is not None and week_norm not in VALID_WEEK_NORMS:
+            return JSONResponse(status_code=422, content={
+                "error": "%s: недельная норма должна быть 30/33/36/39/40" % name})
+        records.append({
+            "name": name, "position": position, "employee_id": employee_id,
+            "rate": rate, "week_norm": week_norm,
+        })
+
+    session_id = payload.session_id
     if session_id:
         session = _get_session(str(session_id))
         if session is None:
@@ -1277,73 +1515,94 @@ def employees_sync(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
                           "at": time.time()}
         _gc_sessions()
 
-    department = (payload.get("department") or "").strip()
+    department = (payload.department or "").strip()
     if department:
         res.department = department
 
+    # --- применение проверенного списка --------------------------------------- #
     report: Dict[str, Any] = {"added": [], "updated": [],
                               "unchanged": [], "removed": []}
+    by_id = {r.employee_id: r for r in res.rows if r.employee_id}
     by_name = {r.name: r for r in res.rows}
-    seen = set()
-    for e in employees:
-        if not isinstance(e, dict):
-            continue
-        name = (e.get("name") or "").strip()
-        if not name:
-            continue
-        seen.add(name)
-        position = (e.get("position") or "").strip()
-        try:
-            rate = float(e.get("rate", 1.0) or 1.0)
-        except (TypeError, ValueError):
-            rate = 1.0
-        if rate <= 0 or rate > 2:
-            rate = 1.0
-        week_norm = e.get("week_norm")
-        if week_norm is not None and week_norm not in VALID_WEEK_NORMS:
-            return JSONResponse(status_code=422, content={
-                "error": "%s: недельная норма должна быть 30/33/36/39/40" % name})
-        row = by_name.get(name)
+    seen_ids = set()
+    seen_names = set()
+    for rec in records:
+        name = rec["name"]
+        seen_names.add(name)
+        if rec["employee_id"]:
+            seen_ids.add(rec["employee_id"])
+        # стабильный ID приоритетнее ФИО (ФИО могут совпадать или меняться)
+        row = by_id.get(rec["employee_id"]) if rec["employee_id"] else None
         if row is None:
+            row = by_name.get(name)
+        if row is None:
+            position = rec["position"]
+            week_norm = rec["week_norm"]
             if position and week_norm is None:
                 week_norm, _r = classify(position)
             idx = max([r.index for r in res.rows], default=-1) + 1
             res.rows.append(EmployeeRow(index=idx, name=name,
-                                        position=position, rate=rate,
+                                        position=position,
+                                        employee_id=rec["employee_id"],
+                                        rate=rec["rate"],
                                         week_norm=week_norm))
             report["added"].append(name)
         else:
             changed = False
-            if position and position != row.position:
-                row.position = position
-                if week_norm is None:
-                    row.week_norm, _r = classify(position)
+            if rec["employee_id"] and rec["employee_id"] != row.employee_id:
+                row.employee_id = rec["employee_id"]
+                changed = True
+            if rec["name"] != row.name:
+                # сопоставление по табельному номеру: ФИО может смениться
+                # (брак/развод), ID остаётся — обновляем имя в графике
+                row.name = rec["name"]
+                changed = True
+            if rec["position"] and rec["position"] != row.position:
+                row.position = rec["position"]
+                if rec["week_norm"] is None:
+                    row.week_norm, _r = classify(rec["position"])
                     row.norm_rule = None
                 changed = True
-            if rate != row.rate:
-                row.rate = rate
+            if rec["rate"] != row.rate:
+                row.rate = rec["rate"]
                 changed = True
-            if week_norm is not None and week_norm != row.week_norm:
-                row.week_norm = int(week_norm)
+            if rec["week_norm"] is not None and rec["week_norm"] != row.week_norm:
+                row.week_norm = int(rec["week_norm"])
                 changed = True
             report["updated" if changed else "unchanged"].append(name)
-    if payload.get("remove_missing"):
+
+    def _matched(row: EmployeeRow) -> bool:
+        return (bool(row.employee_id) and row.employee_id in seen_ids) \
+            or row.name in seen_names
+
+    if payload.remove_missing:
         for row in list(res.rows):
-            if row.name not in seen:
+            if not _matched(row):
                 res.rows.remove(row)
                 report["removed"].append(row.name)
     else:
         # кто есть в графике, но не пришёл от МИС (кандидаты на удаление)
-        report["not_in_list"] = [r.name for r in res.rows if r.name not in seen]
+        report["not_in_list"] = [r.name for r in res.rows if not _matched(r)]
 
     _emit_schedule_changed(res, sid, "employees.sync")
-    return _refresh_session(sid, extra={"sync": report})
+    out = _refresh_session_payload(sid, extra={"sync": report})
+    if out is None:  # сессию вытеснили между созданием и ответом
+        return JSONResponse(status_code=404,
+                            content={"error": "сессия не найдена"})
+    _idem_store(request, out)
+    return JSONResponse(content=out)
 
 
 @router.get("/roster")
-def roster_pull(year: int, month: int) -> JSONResponse:
-    """Полный график сохранённого месяца (pull): сотрудники, дни, часы, конфликты."""
-    found = storage.find_saved(year, month)
+def roster_pull(year: int, month: int,
+                department: Optional[str] = None) -> JSONResponse:
+    """Полный график сохранённого месяца (pull): сотрудники, дни, часы, конфликты.
+
+    ``department`` — необязательный фильтр по подразделению: за один период
+    в клинике может быть несколько графиков (отделения). Без фильтра —
+    самое свежее сохранение периода.
+    """
+    found = storage.find_saved(year, month, department)
     if found is None:
         return JSONResponse(status_code=404,
                             content={"error": "за период график не сохранён"})
@@ -1355,40 +1614,45 @@ def roster_pull(year: int, month: int) -> JSONResponse:
 
 
 @router.post("/roster")
-def roster_push(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
+def roster_push(request: Request, payload: RosterPushIn) -> JSONResponse:
     """Загрузить график целиком (push от МИС) и провалидировать.
 
-    Тело: ``{year, month, department?, employees: [{name, position?, rate?,
-    week_norm?, days?: {"1": "8-15,48", ...}}], save?, org?, title?}``.
-    При ``save=true`` график сразу сохраняется в базу (вебхук month.saved).
+    Тело: ``{year, month, department?, employees: [{employee_id?, name,
+    position?, rate?, week_norm?, days?}], save?, org?, title?}``.
+    При ``save=true`` график сразу сохраняется в базу — идемпотентно:
+    повторный push того же периода и подразделения обновляет запись
+    (вебхук ``month.updated``), а не создаёт копию. Заголовок
+    ``Idempotency-Key`` возвращает сохранённый ответ на повтор запроса.
     """
-    year = payload.get("year")
-    month = payload.get("month")
-    if not isinstance(year, int) or not isinstance(month, int) \
-            or not (1 <= month <= 12):
-        return JSONResponse(status_code=422,
-                            content={"error": "укажите year и month (1-12)"})
-    employees = payload.get("employees")
-    if not isinstance(employees, list):
+    replay = _idem_replay(request)
+    if replay is not None:
+        return replay
+
+    year = payload.year
+    month = payload.month
+    employees = [e.model_dump() for e in payload.employees]
+    if not employees:
         return JSONResponse(status_code=422,
                             content={"error": "укажите employees (список)"})
 
     res = create_manual_schedule(year, month)
-    res.department = (payload.get("department") or "").strip()
+    res.department = (payload.department or "").strip()
     for i, e in enumerate(employees):
-        if not isinstance(e, dict):
-            return JSONResponse(status_code=422,
-                                content={"error": "employees[%d] не объект" % i})
         name = (e.get("name") or "").strip()
         if not name:
             return JSONResponse(status_code=422,
                                 content={"error": "employees[%d]: укажите name" % i})
         position = (e.get("position") or "").strip()
-        try:
-            rate = float(e.get("rate", 1.0) or 1.0)
-        except (TypeError, ValueError):
+        employee_id = str(e.get("employee_id") or "").strip()
+        raw_rate = e.get("rate")
+        if raw_rate is None or raw_rate == "":
             rate = 1.0
-        if rate <= 0 or rate > 2:
+        else:
+            try:
+                rate = float(raw_rate)
+            except (TypeError, ValueError):
+                rate = 0.0  # отклонится следующей проверкой
+        if not (0 < rate <= 2):
             return JSONResponse(status_code=422,
                                 content={"error": "employees[%d]: неверная ставка" % i})
         week_norm = e.get("week_norm")
@@ -1398,11 +1662,9 @@ def roster_push(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
         if position and week_norm is None:
             week_norm, _r = classify(position)
         row = EmployeeRow(index=i, name=name, position=position,
+                          employee_id=employee_id,
                           rate=rate, week_norm=week_norm)
         days = e.get("days") or {}
-        if not isinstance(days, dict):
-            return JSONResponse(status_code=422,
-                                content={"error": "employees[%d].days не объект" % i})
         for dk, dv in days.items():
             try:
                 day = int(dk)
@@ -1421,16 +1683,16 @@ def roster_push(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
         res.rows.append(row)
 
     sid, out = _new_session_payload(res)
-    if payload.get("save"):
+    if payload.save:
         try:
-            saved_id = storage.save_month(
-                year, month, payload.get("org") or DEFAULT_ORG,
-                serialize_result(res), title=(payload.get("title") or ""))
+            saved_id, created = storage.save_month(
+                year, month, payload.org or DEFAULT_ORG,
+                serialize_result(res), title=(payload.title or ""))
             storage.clear_draft()
         except Exception as exc:  # noqa: BLE001
             return JSONResponse(status_code=500, content={"error": str(exc)})
         try:
-            webhooks.emit_event("month.saved", {
+            webhooks.emit_event("month.saved" if created else "month.updated", {
                 "subject": str(saved_id), "saved_id": saved_id,
                 "year": year, "month": month,
                 "department": res.department,
@@ -1440,6 +1702,7 @@ def roster_push(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
         except Exception:  # noqa: BLE001
             pass
         out["saved_id"] = saved_id
+    _idem_store(request, out)
     return JSONResponse(content=out)
 
 
@@ -1466,17 +1729,16 @@ def webhooks_list(request: Request) -> JSONResponse:
 
 
 @router.post("/webhooks")
-def webhooks_create(request: Request,
-                    url: str = Body(..., embed=True),
-                    events: Optional[List[str]] = Body(None, embed=True),
-                    tenant: str = Body("", embed=True)) -> JSONResponse:
+def webhooks_create(request: Request, payload: WebhookCreateIn) -> JSONResponse:
     """Зарегистрировать вебхук; секрет доставки возвращается один раз.
 
     ``events`` — список событий (по умолчанию все, кроме ``webhook.test``).
     Ключ может регистрировать вебхуки только для своего тенанта; локальный
     администратор указывает ``tenant`` явно.
     """
-    url = (url or "").strip()
+    url = (payload.url or "").strip()
+    events = payload.events
+    tenant = payload.tenant or ""
     if not (url.startswith("http://") or url.startswith("https://")):
         return JSONResponse(status_code=422, content={
             "error": "url должен начинаться с http:// или https://"})
@@ -1555,6 +1817,53 @@ def webhooks_test(request: Request, webhook_id: int) -> JSONResponse:
 _TZ_RE = re.compile(r"^[+-](?:0\d|1[0-4]):[0-5]\d$")
 
 
+@router.get("/webhooks/{webhook_id}/deliveries")
+def webhook_deliveries_route(request: Request, webhook_id: int,
+                             limit: int = 50,
+                             failed: bool = False) -> JSONResponse:
+    """История доставок вебхука (новые сверху): событие, статус, попытки.
+
+    ``failed=true`` — только неудачные доставки (кандидаты на replay).
+    Ключ видит историю только своего тенанта.
+    """
+    tenant_id = _webhook_scope(request)
+    hook = storage.get_webhook(webhook_id)
+    if hook is None:
+        return JSONResponse(status_code=404, content={"error": "вебхук не найден"})
+    if tenant_id is not None and int(hook.get("tenant_id") or 0) != tenant_id:
+        # чужой вебхук ничем не отличается от несуществующего
+        return JSONResponse(status_code=404, content={"error": "вебхук не найден"})
+    return JSONResponse(content={"deliveries": storage.list_webhook_deliveries(
+        webhook_id, limit=limit, only_failed=failed, tenant_id=tenant_id)})
+
+
+@router.post("/webhooks/{webhook_id}/replay")
+def webhook_replay_route(request: Request, webhook_id: int,
+                         payload: WebhookReplayIn) -> JSONResponse:
+    """Повторить неудачную доставку (replay): payload отправляется заново.
+
+    Повтор получает новый id доставки (``X-MedRoster-Delivery``); исходная
+    запись истории не меняется. Вебхук должен быть активен — отключённый
+    после серии неудач сначала включите (``/activate``).
+    """
+    tenant_id = _webhook_scope(request)
+    hook = storage.get_webhook(webhook_id)
+    if hook is None:
+        return JSONResponse(status_code=404, content={"error": "вебхук не найден"})
+    if tenant_id is not None and int(hook.get("tenant_id") or 0) != tenant_id:
+        return JSONResponse(status_code=404, content={"error": "вебхук не найден"})
+    rec = storage.get_webhook_delivery(payload.delivery_id, tenant_id=tenant_id)
+    if rec is None or rec["webhook_id"] != webhook_id:
+        return JSONResponse(status_code=404,
+                            content={"error": "доставка не найдена"})
+    result = webhooks.replay_delivery(payload.delivery_id, tenant_id=tenant_id)
+    if not result.get("ok"):
+        code = {"not_found": 404, "webhook_deleted": 404,
+                "webhook_inactive": 409}.get(result.get("error"), 422)
+        return JSONResponse(status_code=code, content=result)
+    return JSONResponse(content=result)
+
+
 @router.get("/export/fhir/{sid}")
 def export_fhir_route(sid: str, tz: str = "+03:00") -> Response:
     """Экспорт графика в HL7 FHIR R4 (Bundle: Practitioner/Schedule/Slot).
@@ -1615,12 +1924,9 @@ def export_signed_route(sid: str, org: Optional[str] = None,
 @router.post("/export/verify")
 async def export_verify(file: UploadFile = File(...)) -> JSONResponse:
     """Проверить подписанный ZIP-пакет (контрольные суммы и подписи)."""
-    data = await file.read()
-    if not data:
-        return JSONResponse(status_code=400, content={"error": "пустой файл"})
-    if len(data) > MAX_UPLOAD_BYTES:
-        return JSONResponse(status_code=413, content={
-            "error": "файл слишком большой (максимум 20 МБ)"})
+    data, err = await _read_upload_limited(file)
+    if err is not None:
+        return err
     try:
         report = verify_signed_zip(data)
     except Exception as exc:  # noqa: BLE001
@@ -1639,19 +1945,21 @@ def list_keys_route() -> JSONResponse:
 
 
 @router.post("/keys")
-def create_key_route(tenant: str = Body(..., embed=True),
-                     label: str = Body("", embed=True)) -> JSONResponse:
+def create_key_route(payload: KeyCreateIn) -> JSONResponse:
     """Выпустить новый API-ключ для тенанта (клиники/МИС).
 
-    Полный ключ возвращается ровно один раз — сохранить его в МИС сразу;
-    восстановлению он не подлежит (только перевыпуск).
+    ``scopes`` — права ключа: ``read`` (GET/HEAD) и/или ``write`` (остальные
+    методы); по умолчанию оба. Полный ключ возвращается ровно один раз —
+    сохранить его в МИС сразу; восстановлению он не подлежит (только
+    перевыпуск).
     """
-    tenant = (tenant or "").strip()
+    tenant = (payload.tenant or "").strip()
     if not tenant:
         return JSONResponse(status_code=422,
                             content={"error": "укажите название тенанта (клиники/МИС)"})
     try:
-        info = api_auth.create_key(tenant, label=label)
+        info = api_auth.create_key(tenant, label=(payload.label or "").strip(),
+                                   scopes=payload.scopes)
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(status_code=500, content={"error": str(exc)})
     return JSONResponse(content=info)
@@ -1702,6 +2010,37 @@ def audit_route(limit: int = 100,
 def audit_stats_route() -> JSONResponse:
     """Сводка аудита: счётчики по результатам авторизации, топ тенантов."""
     return JSONResponse(content=audit_log.stats())
+
+
+@router.get("/audit/export")
+def audit_export_route(auth_status: Optional[str] = None,
+                       key_id: Optional[int] = None) -> Response:
+    """Выгрузить журнал аудита в CSV (Excel-совместимый: «;», UTF-8 BOM).
+
+    Фильтры те же, что у ``GET /audit``: ``auth_status``, ``key_id``.
+    Перед выгрузкой журнал дозаписывается из очереди (``flush``), чтобы
+    в файл попали и самые последние запросы.
+    """
+    audit_log.flush()
+    entries = audit_log.export_rows(auth_status=auth_status, api_key_id=key_id)
+    buf = StringIO()
+    writer = csv.writer(buf, delimiter=";", lineterminator="\r\n")
+    writer.writerow(["id", "ts", "время", "метод", "путь", "статус", "ip",
+                     "ключ", "тенант", "авторизация", "мс"])
+    for e in entries:
+        writer.writerow([
+            e["id"], "%.3f" % e["ts"],
+            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(e["ts"])),
+            e["method"], e["path"], e["status"], e["client_ip"],
+            e["api_key_id"] or "", e["tenant"] or "",
+            e["auth_status"], e["duration_ms"],
+        ])
+    content = "\ufeff" + buf.getvalue()  # BOM: Excel открывает без настроек
+    return Response(
+        content=content.encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition":
+                 'attachment; filename="med-roster-audit.csv"'})
 
 
 @router.delete("/audit")

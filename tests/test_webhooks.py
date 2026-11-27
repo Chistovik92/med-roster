@@ -188,7 +188,7 @@ def test_coalescing_rapid_events(monkeypatch):
     """Быстрые повторные события по одному объекту склеиваются."""
     calls = _deliveries(monkeypatch)
     _create_hook(events=["schedule.changed"])
-    monkeypatch.setattr(webhooks, "_POLL_INTERVAL", 0.5)
+    monkeypatch.setattr(webhooks, "COALESCE_WINDOW", 0.5)
 
     for i in range(5):
         webhooks.emit_event("schedule.changed",
@@ -245,12 +245,15 @@ def test_auto_disable_after_failures(monkeypatch):
 
     monkeypatch.setattr(webhooks, "_urlopen", failing)
     monkeypatch.setattr(config, "WEBHOOK_MAX_FAILURES", 3)
+    monkeypatch.setattr(webhooks, "RETRY_DELAY", 0.05)
     info = _create_hook(events=["month.saved"])
     client = _local()
 
-    for _ in range(3):
+    # разные периоды: с 0.12.0 повторный save того же месяца того же
+    # подразделения — это month.updated (upsert), а не новая запись
+    for year, month in ((2026, 11), (2026, 12), (2027, 1)):
         client.post("/api/v1/roster", json={
-            "year": 2026, "month": 11, "save": True,
+            "year": year, "month": month, "save": True,
             "employees": [{"name": "Иванова И.И."}]})
         assert webhooks.wait_delivered()
 

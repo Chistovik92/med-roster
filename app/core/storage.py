@@ -27,7 +27,9 @@ import sqlite3
 import sys
 import tempfile
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
+
+from app.core import config
 
 _DB_FILENAME = "med-roster.db"
 
@@ -92,6 +94,20 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     cols = [r[1] for r in conn.execute("PRAGMA table_info(saved_months)").fetchall()]
     if "title" not in cols:
         conn.execute("ALTER TABLE saved_months ADD COLUMN title TEXT NOT NULL DEFAULT ''")
+    if "department" not in cols:
+        # 0.12.0: подразделение вынесено в колонку (идемпотентность push/pull
+        # и фильтр find_saved по отделению). Существующие записи наполняем
+        # из JSON-блоба data (однократно, в момент миграции).
+        conn.execute(
+            "ALTER TABLE saved_months ADD COLUMN department TEXT NOT NULL DEFAULT ''")
+        for r in conn.execute("SELECT id, data FROM saved_months").fetchall():
+            try:
+                dept = (json.loads(r["data"]).get("department") or "").strip()
+            except (TypeError, ValueError):
+                dept = ""
+            if dept:
+                conn.execute(
+                    "UPDATE saved_months SET department=? WHERE id=?", (dept, r["id"]))
 
     conn.execute(
         """
@@ -118,6 +134,12 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         """
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)")
+    key_cols = [r[1] for r in conn.execute("PRAGMA table_info(api_keys)").fetchall()]
+    if "scopes" not in key_cols:
+        # 0.12.0: права ключа (JSON-список "read"/"write"). Существующие ключи
+        # получают полные права — поведение не меняется (обратная совместимость).
+        conn.execute(
+            "ALTER TABLE api_keys ADD COLUMN scopes TEXT")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS api_audit_log (
@@ -167,6 +189,29 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         """
     )
 
+    # 0.12.0: история доставок вебхуков — что, когда и с каким результатом
+    # отправлено; используется для повтора (replay) пропущенных уведомлений.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS webhook_deliveries (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            webhook_id  INTEGER NOT NULL,
+            delivery_id TEXT NOT NULL,
+            event       TEXT NOT NULL,
+            subject     TEXT NOT NULL DEFAULT '',
+            payload     TEXT NOT NULL,
+            status      INTEGER,
+            ok          INTEGER NOT NULL DEFAULT 0,
+            attempts    INTEGER NOT NULL DEFAULT 0,
+            created_at  REAL NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_wd_webhook ON webhook_deliveries(webhook_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_wd_created ON webhook_deliveries(created_at)")
+
 
 def init_db() -> None:
     """Создать таблицы, если их ещё нет (идемпотентно, с миграциями)."""
@@ -192,18 +237,41 @@ def get_connection() -> sqlite3.Connection:
 
 
 def save_month(year: int, month: int, org: str, payload: Dict,
-               title: str = "") -> int:
-    """Сохранить месяц, вернуть id записи."""
+               title: str = "", department: Optional[str] = None) -> Tuple[int, bool]:
+    """Сохранить месяц (upsert) и вернуть ``(id, created)``.
+
+    Запись уникальна по периоду и подразделению: повторное сохранение того же
+    (год, месяц, отделение) обновляет существующую запись, а не создаёт копию.
+    Это делает push от МИС идемпотентным (повтор запроса не плодит дубли) и
+    убирает случайные дубли в списке сохранений UI. ``created=True`` — запись
+    создана заново (событие ``month.saved``), ``False`` — заменена
+    (``month.updated``).
+    """
+    if department is None:
+        department = (payload.get("department") or "")
+    department = (department or "").strip()
     init_db()
     with _connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM saved_months WHERE year=? AND month=? AND department=? "
+            "ORDER BY id DESC LIMIT 1",
+            (int(year), int(month), department)).fetchone()
+        data = json.dumps(payload, ensure_ascii=False)
+        if row is not None:
+            conn.execute(
+                "UPDATE saved_months SET org=?, source=?, data=?, saved_at=?, "
+                "title=?, department=? WHERE id=?",
+                (org or "", payload.get("source", ""), data, time.time(),
+                 (title or "").strip(), department, int(row["id"])))
+            return int(row["id"]), False
         cur = conn.execute(
-            "INSERT INTO saved_months (year, month, org, source, data, saved_at, title) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO saved_months (year, month, org, source, data, saved_at, "
+            "                           title, department) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (int(year), int(month), org or "", payload.get("source", ""),
-             json.dumps(payload, ensure_ascii=False), time.time(),
-             (title or "").strip()),
+             data, time.time(), (title or "").strip(), department),
         )
-        return int(cur.lastrowid)
+        return int(cur.lastrowid), True
 
 
 def rename_saved(saved_id: int, title: str) -> bool:
@@ -231,7 +299,7 @@ def list_saved() -> List[Dict]:
     init_db()
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, year, month, org, source, saved_at, data, title "
+            "SELECT id, year, month, org, source, saved_at, data, title, department "
             "FROM saved_months ORDER BY year DESC, month DESC, id DESC"
         ).fetchall()
     out = []
@@ -242,7 +310,7 @@ def list_saved() -> List[Dict]:
             "year": r["year"],
             "month": r["month"],
             "org": r["org"],
-            "dept": (data or {}).get("department", ""),
+            "dept": r["department"] or (data or {}).get("department", ""),
             "source": r["source"],
             "saved_at": r["saved_at"],
             "title": r["title"],
@@ -545,29 +613,118 @@ def set_webhook_active(webhook_id: int, active: bool,
         return cur.rowcount > 0
 
 
-def record_webhook_delivery(webhook_id: int, ok: bool,
-                            status: Optional[int]) -> None:
-    """Зафиксировать результат доставки: сбросить/нарастить счётчик неудач."""
+def record_webhook_delivery(webhook_id: int, ok: bool, status: Optional[int],
+                            event: str = "", subject: str = "", payload: str = "",
+                            delivery_id: str = "", attempts: int = 0) -> None:
+    """Зафиксировать результат доставки: счётчики вебхука + запись истории.
+
+    История (``webhook_deliveries``) хранится ``WEBHOOK_DELIVERY_RETENTION_DAYS``
+    дней и позволяет повторить неудачные доставки (replay).
+    """
     init_db()
+    now = time.time()
     with _connect() as conn:
         if ok:
             conn.execute(
                 "UPDATE webhooks SET last_sent_at=?, last_status=?, fail_count=0 "
-                "WHERE id=?", (time.time(), status, webhook_id))
+                "WHERE id=?", (now, status, webhook_id))
         else:
             conn.execute(
                 "UPDATE webhooks SET last_sent_at=?, last_status=?, "
                 "fail_count=fail_count+1 WHERE id=?",
-                (time.time(), status, webhook_id))
+                (now, status, webhook_id))
+        if delivery_id:
+            conn.execute(
+                "INSERT INTO webhook_deliveries (webhook_id, delivery_id, event, "
+                "                            subject, payload, status, ok, "
+                "                            attempts, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (int(webhook_id), delivery_id, event or "", subject or "",
+                 payload or "", status, 1 if ok else 0, int(attempts), now))
+            retention = max(1, int(config.WEBHOOK_DELIVERY_RETENTION_DAYS))
+            conn.execute("DELETE FROM webhook_deliveries WHERE created_at < ?",
+                         (now - retention * 86400.0,))
 
 
-def find_saved(year: int, month: int) -> Optional[Dict]:
-    """Последнее сохранение за период (полные данные) или None."""
+def find_saved(year: int, month: int,
+               department: Optional[str] = None) -> Optional[Dict]:
+    """Последнее сохранение за период (полные данные) или None.
+
+    ``department`` (необязательно) — фильтр по подразделению: в клинике может
+    быть несколько графиков за один период (отделения). Без фильтра берётся
+    самое свежее сохранение любого подразделения.
+    """
     init_db()
+    query = "SELECT id, data, department FROM saved_months WHERE year=? AND month=?"
+    params: List = [int(year), int(month)]
+    if department is not None:
+        query += " AND department=?"
+        params.append(department.strip())
+    query += " ORDER BY id DESC LIMIT 1"
     with _connect() as conn:
-        row = conn.execute(
-            "SELECT id, data FROM saved_months WHERE year=? AND month=? "
-            "ORDER BY id DESC LIMIT 1", (int(year), int(month))).fetchone()
+        row = conn.execute(query, params).fetchone()
     if row is None:
         return None
-    return {"id": row["id"], "data": json.loads(row["data"])}
+    return {"id": row["id"], "data": json.loads(row["data"]),
+            "department": row["department"] or ""}
+
+
+def list_webhook_deliveries(webhook_id: int, limit: int = 50,
+                            only_failed: bool = False,
+                            tenant_id: Optional[int] = None) -> List[Dict]:
+    """История доставок вебхука (новые сверху), без тенанта — только свой."""
+    init_db()
+    limit = max(1, min(int(limit), 500))
+    query = ("SELECT d.* FROM webhook_deliveries d "
+             "JOIN webhooks w ON w.id = d.webhook_id "
+             "WHERE d.webhook_id = ?")
+    params: List = [int(webhook_id)]
+    if only_failed:
+        query += " AND d.ok = 0"
+    if tenant_id is not None:
+        query += " AND w.tenant_id = ?"
+        params.append(int(tenant_id))
+    query += " ORDER BY d.id DESC LIMIT ?"
+    params.append(limit)
+    with _connect() as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [{
+        "id": r["id"],
+        "webhook_id": r["webhook_id"],
+        "delivery_id": r["delivery_id"],
+        "event": r["event"],
+        "subject": r["subject"],
+        "status": r["status"],
+        "ok": bool(r["ok"]),
+        "attempts": r["attempts"],
+        "created_at": r["created_at"],
+    } for r in rows]
+
+
+def get_webhook_delivery(delivery_id: str,
+                         tenant_id: Optional[int] = None) -> Optional[Dict]:
+    """Одна запись истории доставок (для replay конкретной доставки)."""
+    init_db()
+    query = ("SELECT d.*, w.tenant_id AS wh_tenant FROM webhook_deliveries d "
+             "JOIN webhooks w ON w.id = d.webhook_id "
+             "WHERE d.delivery_id = ?")
+    params: List = [str(delivery_id)]
+    if tenant_id is not None:
+        query += " AND w.tenant_id = ?"
+        params.append(int(tenant_id))
+    with _connect() as conn:
+        row = conn.execute(query, params).fetchone()
+    if row is None:
+        return None
+    return {
+        "id": row["id"],
+        "webhook_id": row["webhook_id"],
+        "delivery_id": row["delivery_id"],
+        "event": row["event"],
+        "subject": row["subject"],
+        "payload": row["payload"],
+        "status": row["status"],
+        "ok": bool(row["ok"]),
+        "attempts": row["attempts"],
+        "created_at": row["created_at"],
+    }

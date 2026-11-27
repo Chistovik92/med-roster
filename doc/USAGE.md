@@ -173,8 +173,10 @@ select it in the «Источник данных» card above.
 ## 6. Saving and generating months
 
 ### Saving a month
-Click **«Сохранить месяц»** («Save month») in the summary. The schedule is
-written to a local SQLite database:
+Click **«Сохранить месяц»** («Save month») in the summary. A record is keyed
+by period and department: saving the same month of the same department again
+**updates the existing record** (no duplicates); a new combination creates
+a record. The schedule is written to a local SQLite database:
 
 - Windows / Linux portable and installed — **inside the program folder**;
 - source launch — the user data directory

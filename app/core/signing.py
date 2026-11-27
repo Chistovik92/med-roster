@@ -25,23 +25,30 @@ from __future__ import annotations
 import hashlib
 import hmac as _hmac
 import secrets as _secrets
+import threading
 from typing import Dict, Optional
 
 from app.core import config, storage
 
 _SETTING_KEY = "sign_secret"
 
+# Автогенерация секрета: под lock, чтобы два параллельных запроса не создали
+# разные секреты (один из них «потерялся» бы в БД, и его подписи перестали
+# бы проходить проверку).
+_secret_lock = threading.Lock()
+
 
 def get_sign_secret() -> str:
     """Секрет подписи: env ``MEDROSTER_SIGN_SECRET`` или автогенерация в БД."""
     if config.SIGN_SECRET:
         return config.SIGN_SECRET
-    stored = storage.get_setting(_SETTING_KEY)
-    if stored:
-        return stored
-    generated = _secrets.token_hex(32)
-    storage.set_setting(_SETTING_KEY, generated)
-    return generated
+    with _secret_lock:
+        stored = storage.get_setting(_SETTING_KEY)
+        if stored:
+            return stored
+        generated = _secrets.token_hex(32)
+        storage.set_setting(_SETTING_KEY, generated)
+        return generated
 
 
 def sign_bytes(data: bytes, secret: Optional[str] = None) -> Dict[str, str]:

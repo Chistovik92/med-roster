@@ -47,6 +47,7 @@ class EmployeeRow:
     index: int                              # исходный номер строки в листе (0-based)
     name: str
     position: str
+    employee_id: str = ""                   # табельный номер / ID из МИС (0.12.0)
     rate: float = 1.0
     week_norm: Optional[int] = None         # недельная норма по классификатору
     norm_rule: Optional[str] = None         # сработавшее правило классификации
@@ -95,6 +96,7 @@ def serialize_result(result: ImportResult) -> Dict:
         employees.append({
             "name": r.name,
             "position": r.position,
+            "employee_id": r.employee_id or "",
             "rate": r.rate,
             "week_norm": r.week_norm,
             "days": {str(d): v for d, v in r.raw_cells.items() if v != ""},
@@ -130,7 +132,9 @@ def deserialize_result(data: Dict) -> ImportResult:
         week_norm = e.get("week_norm")
         if week_norm is not None:
             week_norm = int(week_norm)
+        employee_id = str(e.get("employee_id", "") or "")
         row = EmployeeRow(index=i, name=name, position=position,
+                          employee_id=employee_id,
                           rate=rate, week_norm=week_norm)
         for dk, v in (e.get("days") or {}).items():
             d = int(dk)

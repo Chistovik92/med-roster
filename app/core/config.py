@@ -30,6 +30,8 @@
 * ``MEDROSTER_WEBHOOK_TIMEOUT`` — таймаут доставки вебхука, сек (по умолчанию 5).
 * ``MEDROSTER_WEBHOOK_MAX_FAILURES`` — подряд неудачных доставок, после которых
   вебхук отключается (по умолчанию 10; ``0`` — не отключать).
+* ``MEDROSTER_WEBHOOK_DELIVERY_RETENTION_DAYS`` — сколько дней хранить историю
+  доставок вебхуков для повтора (по умолчанию 30).
 
 Важно для тестов: значения читаются в момент запроса (middleware обращается к
 атрибутам модуля), поэтому их можно менять через monkeypatch без перезапуска.
@@ -92,3 +94,6 @@ SIGN_SECRET = os.environ.get("MEDROSTER_SIGN_SECRET", "").strip()
 WEBHOOK_TIMEOUT = _int_env("MEDROSTER_WEBHOOK_TIMEOUT", 5)
 # Число последовательных неудач, после которых вебхук отключается (0 = никогда).
 WEBHOOK_MAX_FAILURES = _int_env("MEDROSTER_WEBHOOK_MAX_FAILURES", 10)
+# Сколько дней хранить историю доставок вебхуков (для повтора пропущенных).
+WEBHOOK_DELIVERY_RETENTION_DAYS = _int_env(
+    "MEDROSTER_WEBHOOK_DELIVERY_RETENTION_DAYS", 30)

@@ -68,11 +68,13 @@ saved months are preserved.
   schedule for approval/signature.
 - **MIS integration (REST API)**: versioned `/api/v1` contract with an OpenAPI
   schema (`/api/openapi.json`), API-key authorization for external callers
-  (`X-API-Key`, per-clinic tenants), rate limiting (70/min, heavy 10/min),
-  request auditing and CORS. The local UI keeps working without a key.
-- **Sync & webhooks**: schedule push/pull (`/api/v1/roster`), employee master
-  data and HR sync (`/api/v1/employees`), HMAC-signed webhook notifications
-  about changes.
+  (`X-API-Key`, per-clinic tenants, `read`/`write` key scopes), rate limiting
+  (70/min, heavy 10/min), request auditing with CSV export and CORS.
+  The local UI keeps working without a key.
+- **Sync & webhooks**: schedule push/pull (`/api/v1/roster`, idempotent
+  requests via `Idempotency-Key`, employee matching by staff ID), employee
+  master data and HR sync (`/api/v1/employees`), HMAC-signed webhook
+  notifications with delivery history and failed-delivery replay.
 - **FHIR & signed export**: schedule as an HL7 FHIR R4 bundle
   (Practitioner/Schedule/Slot) and a signed ZIP package of all forms
   (SHA-256 + HMAC-SHA256 integrity).

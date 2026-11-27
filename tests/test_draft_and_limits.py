@@ -98,7 +98,7 @@ def test_import_size_limit():
     class FakeUpload:
         filename = "big.xls"
 
-        async def read(self):
+        async def read(self, size=-1):
             return big
 
     import asyncio
@@ -112,7 +112,7 @@ def test_database_import_size_limit():
     class FakeUpload:
         filename = "big.db"
 
-        async def read(self):
+        async def read(self, size=-1):
             return big
 
     import asyncio

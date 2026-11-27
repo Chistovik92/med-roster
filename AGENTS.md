@@ -405,6 +405,52 @@ M_инд = M_баз − (W_нед / 5 × N_неявок × rate)
     (7), `test_signing.py` (7). Всего **169 тестов, все зелёные** (полный
     прогон до 100%, проверено junit/подсчётом).
 
+- **Релиз 0.12.0 (завершение API + аудит устойчивости):**
+  - **Scopes ключей:** `read` (GET/HEAD) / `write` (остальные); дефолт — оба
+    (ключи до 0.12.0 не меняют поведения); нехватка права → 403
+    (`forbidden_scope`). `POST /api/keys` принимает `scopes`, списки ключей
+    показывают права. Гонка `ensure_tenant` починена (IntegrityError → re-SELECT).
+  - **`employee_id` (табельный номер):** поле `EmployeeRow` (после position),
+    сериализация/десериализация с legacy-фолбэком, push/pull/структура сессии.
+    Sync сопоставляет по employee_id (фолбэк ФИО): смена фамилии обновляет имя
+    без дублей и не трогает дни; `remove_missing` учитывает номер.
+  - **Идемпотентность:** `Idempotency-Key` для `POST /roster` и
+    `/employees/sync` — кэш `_idempotency[(subject, key)]` (subject =
+    `key:{id}` или `ip:{ip}`), TTL 24 ч, лимит 512; повтор — сохранённый
+    ответ + `Idempotency-Replayed: true`. Хелперы `_idem_key/_idem_subject/
+    _idem_lookup/_idem_store/_idem_replay`.
+  - **Upsert сохранений:** `save_month` уникален по (year, month, department),
+    возвращает `(id, created)`; повторное сохранение → `month.updated`;
+    `GET /api/v1/roster?department=`; ответ `/session/{sid}/save` содержит
+    `created`. Миграция: колонка `saved_months.department` + бэкфилл из JSON.
+  - **История доставок вебхуков:** таблица `webhook_deliveries` (+2 индекса),
+    пишется на финальной попытке (`delivery_id` только при `final`);
+    `GET /webhooks/{id}/deliveries` (limit, failed), `POST /webhooks/{id}/replay`
+    (новый delivery_id, исходная запись не меняется; rec.webhook_id должен
+    совпадать с path). Ретеншн `MEDROSTER_WEBHOOK_DELIVERY_RETENTION_DAYS` (30).
+    Воркер переписан: `threading.Condition` (без busy-poll), COALESCE_WINDOW
+    0.25 с, RETRY_DELAY 1.0 с, надёжный `wait_delivered` через `_busy`.
+  - **Pydantic-модели** тел v1: `EmployeeIn`, `RosterPushIn`, `EmployeeSyncIn`,
+    `WebhookCreateIn`, `WebhookReplayIn`, `KeyCreateIn` → богатая OpenAPI-схема.
+    Семантические проверки в роутах сохранены (форматы 422/404 не изменились);
+    `rate` в модели без gt/le — диапазон ин-роут.
+  - **Экспорт аудита:** `GET /api/audit/export` (local-only через префикс
+    `/audit`; фильтры auth_status/key_id) — CSV «;» + UTF-8 BOM;
+    `AuditLog.export_rows()` без LIMIT (объём режет retention).
+  - **Аудит устойчивости — исправлено:** sync пре-валидация всего списка ДО
+    мутации сессии (частичное применение убрано); мусорная ставка sync → 422
+    (раньше тихо 1.0); FHIR `T24:00:00` → перенос на следующие сутки
+    (`datetime + timedelta`); чтение загрузок (.xls/.db/verify) кусками 1 МБ,
+    размер проверяется ДО чтения по `UploadFile.size` (413); `_secret_lock`
+    вокруг автогенерации секрета подписи.
+  - `_is_heavy` += POST /roster и /employees/sync; `_row_to_dict` +=
+    employee_id; `_refresh_session` → `_refresh_session_payload` (dict) +
+    обёртка (для идемпотентности sync).
+  - Тесты: `tests/test_api_v1_complete.py` (25); обновлены test_storage
+    (кортеж save_month), test_draft_and_limits (FakeUpload.read(size)),
+    test_webhooks (COALESCE_WINDOW, RETRY_DELAY, разные месяцы для
+    auto-disable). Всего **194 теста, все зелёные**.
+
 ## 11. Ближайшие действия
 
 1. ~~Календарь `calendar_rf.py`~~ — ГОТОВО.
@@ -444,3 +490,7 @@ M_инд = M_баз − (W_нед / 5 × N_неявок × rate)
 23. ~~**0.11.0 (Фазы 2–3 интеграции):** push/pull графиков, синхронизация
     сотрудников HR↔МИС, вебхуки с подписью, HL7 FHIR R4, подписанный ZIP-пакет
     экспорта + починка гонки теста shutdown.~~ — ГОТОВО.
+24. ~~**0.12.0 (завершение API):** scopes ключей, employee_id, идемпотентность
+    push/sync, upsert сохранений, история доставок вебхуков + replay,
+    Pydantic-модели, экспорт аудита CSV + аудит устойчивости (10 багов
+    найдено и исправлено).~~ — ГОТОВО.

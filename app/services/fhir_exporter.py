@@ -20,6 +20,7 @@
 """
 from __future__ import annotations
 
+import datetime as _dt
 from typing import Dict, List
 
 from app.core.constants import STATUS_CODES
@@ -39,9 +40,16 @@ _ABSENCE_SLOT_TYPES = ("vacation", "sick", "study")
 
 
 def _instant(year: int, month: int, day: int, minutes: int, tz: str) -> str:
-    """FHIR-instant: дата + время (ЧЧ:ММ:СС) + смещение часового пояса."""
-    return "%04d-%02d-%02dT%02d:%02d:00%s" % (year, month, day,
-                                              minutes // 60, minutes % 60, tz)
+    """FHIR-instant: дата + время (ЧЧ:ММ:СС) + смещение часового пояса.
+
+    ``minutes`` может превышать сутки (1440): слот неявки «весь день»
+    заканчивается в 24:00, а время ``24:00`` в FHIR недопустимо — поэтому
+    лишние минуты переносятся на следующие сутки (00:00 следующего дня).
+    ``datetime`` корректно перекатывает и месяц, и год (31-е число).
+    """
+    base = _dt.datetime(year, month, day) + _dt.timedelta(minutes=minutes)
+    return "%04d-%02d-%02dT%02d:%02d:00%s" % (
+        base.year, base.month, base.day, base.hour, base.minute, tz)
 
 
 def _slug_id(prefix: str, num: int) -> str:

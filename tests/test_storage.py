@@ -41,7 +41,8 @@ def test_save_and_list():
     res.department = "УПО"
     payload = serialize_result(res)
 
-    saved_id = storage.save_month(res.year, res.month, "ГУЗ «СГП № 16»", payload)
+    saved_id, _created = storage.save_month(
+        res.year, res.month, "ГУЗ «СГП № 16»", payload)
     assert saved_id > 0
 
     lst = storage.list_saved()
@@ -68,7 +69,8 @@ def test_rename_and_update():
     res = make_result()
     res.department = "УПО"
     payload = serialize_result(res)
-    saved_id = storage.save_month(res.year, res.month, "ГУЗ «СГП № 16»", payload)
+    saved_id, _created = storage.save_month(
+        res.year, res.month, "ГУЗ «СГП № 16»", payload)
 
     assert storage.rename_saved(saved_id, "Ноябрьский график") is True
     assert storage.list_saved()[0]["title"] == "Ноябрьский график"
@@ -90,7 +92,8 @@ def test_export_import_database():
     res = make_result()
     res.department = "УПО"
     payload = serialize_result(res)
-    saved_id = storage.save_month(res.year, res.month, "ГУЗ «СГП № 16»", payload)
+    saved_id, _created = storage.save_month(
+        res.year, res.month, "ГУЗ «СГП № 16»", payload)
 
     export_path = storage.export_database()
     assert os.path.isfile(export_path)

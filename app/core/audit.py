@@ -124,6 +124,33 @@ class AuditLog:
         finally:
             conn.close()
 
+    def export_rows(self, auth_status: Optional[str] = None,
+                    api_key_id: Optional[int] = None) -> List[Dict]:
+        """Все записи аудита без лимита (для выгрузки в CSV), новые сверху.
+
+        В отличие от ``recent`` не ограничена 1000 записей: объём журнала
+        ограничивает retention (``MEDROSTER_AUDIT_RETENTION_DAYS``).
+        """
+        clauses = []
+        params: List = []
+        if auth_status:
+            clauses.append("auth_status = ?")
+            params.append(auth_status)
+        if api_key_id is not None:
+            clauses.append("api_key_id = ?")
+            params.append(int(api_key_id))
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        conn = storage.get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT id, ts, method, path, status, client_ip, api_key_id, "
+                "       tenant, auth_status, duration_ms "
+                "FROM api_audit_log%s ORDER BY id DESC" % where,
+                params).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
     def stats(self) -> Dict:
         """Сводка: счётчики по результатам авторизации и топ тенантов."""
         conn = storage.get_connection()
