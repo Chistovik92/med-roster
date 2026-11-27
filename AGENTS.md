@@ -364,6 +364,46 @@ M_инд = M_баз − (W_нед / 5 × N_неявок × rate)
   - Новые тесты: `test_api_auth.py` (19), `test_rate_limit.py` (13),
     `test_audit_log.py` (12), обновлён `test_shutdown.py` (3).
     Всего 133 теста, все зелёные. `API_INTEGRATION.md` переписан (раздел 1a).
+- **Релиз 0.11.0 (Фазы 2–3 интеграции: синхронизация, вебхуки, FHIR, подпись):**
+  - **Push/pull графиков:** `POST /api/v1/roster` (график целиком от МИС →
+    сессия с валидацией; `save` — сразу в БД), `GET /api/v1/roster?year=&month=`
+    (полный сохранённый месяц; 404, если не сохранён).
+  - **Мастер-данные сотрудников (HR↔МИС):** `GET /api/v1/employees`
+    (справочник из сохранённых месяцев, фильтры year/month/department),
+    `POST /api/v1/employees/sync` (upsert по ФИО; `remove_missing`;
+    отчёт added/updated/unchanged/removed/not_in_list; опционально
+    `session_id` — синхронизация в существующую сессию).
+  - **Вебхуки:** `GET/POST /api/v1/webhooks`, `DELETE .../{id}`,
+    `POST .../{id}/activate`, `POST .../{id}/test`. События: month.saved,
+    month.updated, month.deleted, schedule.changed (ячейка/автозаполнение/
+    копирование/генерация/CRUD сотрудников/синхронизация). Доставка:
+    фоновый поток, HMAC-SHA256 тела (`X-MedRoster-Signature`), заголовки
+    события/доставки, склеивание быстрых событий по объекту (при правке
+    ячеек МИС получает самое свежее), 1 ретрай, автоотключение после
+    `MEDROSTER_WEBHOOK_MAX_FAILURES` (10) неудач. Ключ видит только свой
+    тенант; локальный админ — все.
+  - **HL7 FHIR R4:** `GET /api/v1/export/fhir/{sid}?tz=+03:00` — Bundle
+    (Practitioner/Schedule/Slot; смены → busy, отпуск/больничный/учёба →
+    busy-unavailable, В/Я без слотов, invalid → OperationOutcome warning).
+    `tz` в query: `%2B04%3A00` или `04:00` (нормализация: «+» декодируется
+    в пробел). Часы 00–14.
+  - **Подписанный пакет:** `GET /api/v1/export/signed/{sid}` — ZIP (5 форм +
+    manifest.json с SHA-256/HMAC каждого файла + manifest.sig) и
+    `POST /api/v1/export/verify` (проверка целого/подменённого пакета).
+    Секрет: `MEDROSTER_SIGN_SECRET` или автогенерация в БД (`settings`).
+    Это подпись целостности, НЕ юридическая ЭЦП (нужен УЦ/ГОСТ).
+  - Новые модули: `app/core/signing.py`, `app/services/webhooks.py`,
+    `app/services/fhir_exporter.py`; `storage.py`: таблицы `webhooks`/
+    `settings`, `find_saved`, CRUD вебхуков; `api_auth.find_tenant_id`.
+  - **Исправлена гонка в `test_shutdown_route_registered`** (существовала
+    с 0.4.5!): тест ждал только первый вызов заглушки; второй поток
+    (от POST /api/v1/shutdown) просыпался после `patches.undo()` и вызывал
+    настоящий `os._exit(0)` — процесс pytest умирал посреди набора с кодом 0
+    («зелёный» обрыв, тесты после test_shutdown не выполнялись). Теперь тест
+    ждёт ОБА вызова; полный набор реально проходит до конца.
+  - Тесты: `test_sync.py` (10), `test_webhooks.py` (12), `test_fhir_export.py`
+    (7), `test_signing.py` (7). Всего **169 тестов, все зелёные** (полный
+    прогон до 100%, проверено junit/подсчётом).
 
 ## 11. Ближайшие действия
 
@@ -401,3 +441,6 @@ M_инд = M_баз − (W_нед / 5 × N_неявок × rate)
     Android-приставок (тач-навигация, крупные цели), финальная приёмка.~~ — ГОТОВО.
 22. ~~**0.10.0 (Фаза 1 интеграции с МИС):** `/api/v1` + OpenAPI, API-ключи
     с тенантами, rate limiting, аудит запросов, CORS, env-конфигурация.~~ — ГОТОВО.
+23. ~~**0.11.0 (Фазы 2–3 интеграции):** push/pull графиков, синхронизация
+    сотрудников HR↔МИС, вебхуки с подписью, HL7 FHIR R4, подписанный ZIP-пакет
+    экспорта + починка гонки теста shutdown.~~ — ГОТОВО.

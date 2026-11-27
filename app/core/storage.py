@@ -136,6 +136,37 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_api_audit_log_ts ON api_audit_log(ts)")
 
+    # Вебхуки: МИС регистрирует URL для уведомлений об изменениях графиков.
+    # ``events`` — JSON-список строк; ``secret`` — HMAC-ключ доставки
+    # (генерируется сервером, показывается один раз, как API-ключ).
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS webhooks (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id    INTEGER NOT NULL,
+            url          TEXT NOT NULL,
+            secret       TEXT NOT NULL,
+            events       TEXT NOT NULL DEFAULT '[]',
+            is_active    INTEGER NOT NULL DEFAULT 1,
+            created_at   REAL NOT NULL,
+            last_sent_at REAL,
+            last_status  INTEGER,
+            fail_count   INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_webhooks_tenant ON webhooks(tenant_id)")
+
+    # Простое key-value хранилище настроек (например, секрет подписи экспорта).
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+    )
+
 
 def init_db() -> None:
     """Создать таблицы, если их ещё нет (идемпотентно, с миграциями)."""
@@ -388,3 +419,155 @@ def draft_info() -> Dict:
         "employee_count": len(data.get("employees", []) or []),
         "saved_at": mtime,
     }
+
+
+# --------------------------------------------------------------------------- #
+#  Настройки (key-value): секрет подписи экспорта и другие служебные значения.
+# --------------------------------------------------------------------------- #
+def get_setting(key: str) -> Optional[str]:
+    """Прочитать настройку; None, если не задана."""
+    init_db()
+    with _connect() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    return row["value"] if row is not None else None
+
+
+def set_setting(key: str, value: str) -> None:
+    """Сохранить настройку (upsert)."""
+    init_db()
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, str(value)),
+        )
+
+
+# --------------------------------------------------------------------------- #
+#  Вебхуки (уведомления МИС об изменениях графиков).
+# --------------------------------------------------------------------------- #
+def create_webhook(tenant_id: int, url: str, secret: str,
+                   events: List[str]) -> int:
+    """Зарегистрировать вебхук; вернуть id."""
+    init_db()
+    with _connect() as conn:
+        cur = conn.execute(
+            "INSERT INTO webhooks (tenant_id, url, secret, events, is_active, created_at) "
+            "VALUES (?, ?, ?, ?, 1, ?)",
+            (int(tenant_id), url, secret,
+             json.dumps(list(events), ensure_ascii=False), time.time()))
+        return int(cur.lastrowid)
+
+
+def get_webhook(webhook_id: int) -> Optional[Dict]:
+    """Вебхук по id (или None)."""
+    init_db()
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM webhooks WHERE id=?", (webhook_id,)).fetchone()
+    return _webhook_row_to_dict(row) if row is not None else None
+
+
+def list_webhooks(tenant_id: Optional[int] = None) -> List[Dict]:
+    """Список вебхуков (всех или одного тенанта), без секретов."""
+    init_db()
+    with _connect() as conn:
+        if tenant_id is None:
+            rows = conn.execute(
+                "SELECT w.*, t.name AS tenant_name FROM webhooks w "
+                "LEFT JOIN tenants t ON t.id = w.tenant_id "
+                "ORDER BY w.id").fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT w.*, t.name AS tenant_name FROM webhooks w "
+                "LEFT JOIN tenants t ON t.id = w.tenant_id "
+                "WHERE w.tenant_id=? ORDER BY w.id", (int(tenant_id),)).fetchall()
+    out = []
+    for r in rows:
+        d = _webhook_row_to_dict(r)
+        d["tenant"] = r["tenant_name"] if "tenant_name" in r.keys() else ""
+        out.append(d)
+    return out
+
+
+def _webhook_row_to_dict(row) -> Dict:
+    """Вебхук в словарь (без секрета — только факт его наличия)."""
+    try:
+        events = json.loads(row["events"])
+    except (TypeError, ValueError):
+        events = []
+    return {
+        "id": row["id"],
+        "tenant_id": row["tenant_id"],
+        "url": row["url"],
+        "events": events,
+        "is_active": bool(row["is_active"]),
+        "created_at": row["created_at"],
+        "last_sent_at": row["last_sent_at"],
+        "last_status": row["last_status"],
+        "fail_count": row["fail_count"],
+        "has_secret": bool(row["secret"]),
+    }
+
+
+def get_webhook_secret(webhook_id: int) -> Optional[str]:
+    """Секрет доставки вебхука (нужен потоку отправки; наружу не отдаётся)."""
+    init_db()
+    with _connect() as conn:
+        row = conn.execute("SELECT secret FROM webhooks WHERE id=?",
+                           (webhook_id,)).fetchone()
+    return row["secret"] if row is not None else None
+
+
+def delete_webhook(webhook_id: int, tenant_id: Optional[int] = None) -> bool:
+    """Удалить вебхук; True, если существовал. Тенант удаляет только свой."""
+    init_db()
+    with _connect() as conn:
+        if tenant_id is None:
+            cur = conn.execute("DELETE FROM webhooks WHERE id=?", (webhook_id,))
+        else:
+            cur = conn.execute("DELETE FROM webhooks WHERE id=? AND tenant_id=?",
+                               (webhook_id, int(tenant_id)))
+        return cur.rowcount > 0
+
+
+def set_webhook_active(webhook_id: int, active: bool,
+                       tenant_id: Optional[int] = None) -> bool:
+    """Включить/отключить вебхук; True, если существовал."""
+    init_db()
+    with _connect() as conn:
+        if tenant_id is None:
+            cur = conn.execute("UPDATE webhooks SET is_active=? WHERE id=?",
+                               (1 if active else 0, webhook_id))
+        else:
+            cur = conn.execute(
+                "UPDATE webhooks SET is_active=? WHERE id=? AND tenant_id=?",
+                (1 if active else 0, webhook_id, int(tenant_id)))
+        return cur.rowcount > 0
+
+
+def record_webhook_delivery(webhook_id: int, ok: bool,
+                            status: Optional[int]) -> None:
+    """Зафиксировать результат доставки: сбросить/нарастить счётчик неудач."""
+    init_db()
+    with _connect() as conn:
+        if ok:
+            conn.execute(
+                "UPDATE webhooks SET last_sent_at=?, last_status=?, fail_count=0 "
+                "WHERE id=?", (time.time(), status, webhook_id))
+        else:
+            conn.execute(
+                "UPDATE webhooks SET last_sent_at=?, last_status=?, "
+                "fail_count=fail_count+1 WHERE id=?",
+                (time.time(), status, webhook_id))
+
+
+def find_saved(year: int, month: int) -> Optional[Dict]:
+    """Последнее сохранение за период (полные данные) или None."""
+    init_db()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id, data FROM saved_months WHERE year=? AND month=? "
+            "ORDER BY id DESC LIMIT 1", (int(year), int(month))).fetchone()
+    if row is None:
+        return None
+    return {"id": row["id"], "data": json.loads(row["data"])}

@@ -70,6 +70,12 @@ saved months are preserved.
   schema (`/api/openapi.json`), API-key authorization for external callers
   (`X-API-Key`, per-clinic tenants), rate limiting (70/min, heavy 10/min),
   request auditing and CORS. The local UI keeps working without a key.
+- **Sync & webhooks**: schedule push/pull (`/api/v1/roster`), employee master
+  data and HR sync (`/api/v1/employees`), HMAC-signed webhook notifications
+  about changes.
+- **FHIR & signed export**: schedule as an HL7 FHIR R4 bundle
+  (Practitioner/Schedule/Slot) and a signed ZIP package of all forms
+  (SHA-256 + HMAC-SHA256 integrity).
   See `API_INTEGRATION.md` (in Russian) for details.
 
 ## Requirements

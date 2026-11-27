@@ -74,6 +74,23 @@ def ensure_tenant(name: str) -> int:
         conn.close()
 
 
+def find_tenant_id(name: str) -> Optional[int]:
+    """Найти тенант по имени (без создания); None, если нет.
+
+    В отличие от ``ensure_tenant`` не создаёт запись: используется для
+    разграничения доступа (вебхуки тенанта), где «автосоздание» недопустимо.
+    """
+    name = (name or "").strip()
+    if not name:
+        return None
+    conn = storage.get_connection()
+    try:
+        row = conn.execute("SELECT id FROM tenants WHERE name=?", (name,)).fetchone()
+        return int(row["id"]) if row is not None else None
+    finally:
+        conn.close()
+
+
 def list_tenants() -> List[Dict]:
     """Список тенантов с числом активных ключей."""
     conn = storage.get_connection()

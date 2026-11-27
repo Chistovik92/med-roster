@@ -14,6 +14,7 @@ import io
 import html as _html
 from typing import List, Optional, Tuple
 
+from app import __version__
 from app.core.constants import DEFAULT_ORG
 from app.services.norm_calculator import monthly_base_norm
 from app.services.xls_importer import ImportResult, EmployeeRow
@@ -371,3 +372,118 @@ h1{font-size:16px;text-align:center;margin:6px 0 2px;}
         month_name, result.year,
         _html.escape(org), _html.escape(dept), month_name, result.year,
         _html.escape(head), day_head, "".join(rows_html))
+
+
+
+# --------------------------------------------------------------------------- #
+#  Подписанный пакет экспорта (ZIP + манифест + HMAC-SHA256).
+#
+#  Все пять форматов выгрузки собираются в один архив; рядом кладётся
+#  manifest.json с контрольными суммами каждого файла и подписью манифеста
+#  (manifest.sig). Получатель может убедиться, что файлы не изменялись после
+#  выгрузки и не подделаны (см. app/core/signing.py).
+# --------------------------------------------------------------------------- #
+def export_signed_zip(result: ImportResult, org: str = DEFAULT_ORG,
+                      dept: str = "", signer: str = "") -> bytes:
+    """Собрать подписанный ZIP-пакет всех форматов экспорта (байты)."""
+    import io as _io
+    import json as _json
+    import time as _time
+    import zipfile as _zipfile
+
+    from app.core import signing
+
+    period = "%d-%02d" % (result.year, result.month)
+    files = [
+        ("graph_%s.csv" % period,
+         export_csv(result).encode("utf-8")),
+        ("graph_%s.xls" % period,
+         export_xls(result, org=org, dept=dept)),
+        ("tabel_T13_%s.html" % period,
+         export_t13_html(result, org=org, dept=dept).encode("utf-8")),
+        ("tabel_OKUD0504421_%s.html" % period,
+         export_okud_html(result, org=org, dept=dept).encode("utf-8")),
+        ("graph_podpis_%s.html" % period,
+         export_signoff_html(result, org=org, dept=dept).encode("utf-8")),
+    ]
+
+    manifest_files = []
+    buf = _io.BytesIO()
+    with _zipfile.ZipFile(buf, "w", _zipfile.ZIP_DEFLATED) as zf:
+        for name, data in files:
+            sig = signing.sign_bytes(data)
+            zf.writestr(name, data)
+            manifest_files.append({
+                "name": name,
+                "size": len(data),
+                "sha256": sig["sha256"],
+                "hmac_sha256": sig["hmac_sha256"],
+            })
+        manifest = {
+            "app": "med-roster",
+            "version": __version__,
+            "generated_at": _time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "year": result.year,
+            "month": result.month,
+            "org": org,
+            "department": dept,
+            "signer": (signer or "").strip(),
+            "algorithm": "HMAC-SHA256",
+            "files": manifest_files,
+        }
+        manifest_bytes = _json.dumps(
+            manifest, ensure_ascii=False, indent=2).encode("utf-8")
+        zf.writestr("manifest.json", manifest_bytes)
+        manifest_sig = signing.sign_bytes(manifest_bytes)
+        zf.writestr("manifest.sig", manifest_sig["hmac_sha256"])
+
+    return buf.getvalue()
+
+
+def verify_signed_zip(zip_bytes: bytes) -> dict:
+    """Проверить подписанный пакет: контрольные суммы и подпись манифеста.
+
+    Возвращает {"ok": bool, "errors": [...], "files": [...]}. Проверяются:
+    целостность каждого файла (sha256), подпись каждого файла (hmac) и
+    подпись манифеста (manifest.sig). Используется эндпоинтом /export/verify
+    и доступно МИС для самопроверки полученного пакета.
+    """
+    import io as _io
+    import json as _json
+    import zipfile as _zipfile
+
+    from app.core import signing
+
+    errors = []
+    out_files = []
+    with _zipfile.ZipFile(_io.BytesIO(zip_bytes)) as zf:
+        names = zf.namelist()
+        if "manifest.json" not in names:
+            return {"ok": False,
+                    "errors": ["в пакете нет manifest.json"], "files": []}
+        manifest_bytes = zf.read("manifest.json")
+        manifest = _json.loads(manifest_bytes.decode("utf-8"))
+        manifest_sig = ""
+        if "manifest.sig" in names:
+            manifest_sig = zf.read("manifest.sig").decode("utf-8").strip()
+        else:
+            errors.append("в пакете нет manifest.sig")
+        if manifest_sig and not signing.verify_bytes(manifest_bytes, manifest_sig):
+            errors.append("подпись манифеста не сошлась (данные изменены?)")
+
+        for f in manifest.get("files", []):
+            name = f.get("name", "")
+            if name not in names:
+                errors.append("в пакете нет файла: %s" % name)
+                continue
+            data = zf.read(name)
+            sig = signing.sign_bytes(data)
+            file_ok = (sig["sha256"] == f.get("sha256")
+                       and sig["hmac_sha256"] == f.get("hmac_sha256"))
+            if not file_ok:
+                errors.append("контрольная сумма или подпись не сошлись: %s" % name)
+            out_files.append({"name": name, "size": len(data), "ok": file_ok})
+
+    return {"ok": not errors, "errors": errors, "files": out_files,
+            "signer": manifest.get("signer", ""),
+            "generated_at": manifest.get("generated_at", "")}

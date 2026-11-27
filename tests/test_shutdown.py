@@ -13,6 +13,7 @@
 import os
 import sys
 import threading
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -33,13 +34,21 @@ def _isolated(monkeypatch, tmp_path):
 
 
 def test_shutdown_route_registered():
-    """POST /api/shutdown и /api/v1/shutdown отвечают (роуты подключены)."""
+    """POST /api/shutdown и /api/v1/shutdown отвечают (роуты подключены).
+
+    Важно: ждём ОБА вызова заглушки (по одному на каждый POST) и только
+    потом снимаем monkeypatch. Раньше тест ждал первый вызов — второй
+    поток мог проснуться после undo() и вызвать настоящий ``os._exit(0)``,
+    убивая процесс pytest посреди набора (с кодом 0, «зелёно»).
+    """
     from fastapi.testclient import TestClient
 
-    called = threading.Event()
+    calls = []
+    calls_lock = threading.Lock()
 
     def fake_stop():
-        called.set()
+        with calls_lock:
+            calls.append(1)
 
     patches = pytest.MonkeyPatch()
     patches.setattr(main, "_stop_process", fake_stop)
@@ -50,7 +59,10 @@ def test_shutdown_route_registered():
             resp = client.post(path)
             assert resp.status_code == 200, path
             assert resp.json()["status"] == "stopping"
-        assert called.wait(timeout=2.0)
+        deadline = time.time() + 5.0
+        while len(calls) < 2 and time.time() < deadline:
+            time.sleep(0.01)
+        assert len(calls) == 2, "ожидались оба вызова остановки"
     finally:
         patches.undo()
 
